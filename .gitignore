@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+venv/
+.env
+cross_paper_history.json
+bot_status.json
