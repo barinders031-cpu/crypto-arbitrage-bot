@@ -295,12 +295,19 @@ def bot_background_loop():
                     'next_funding':timing_label,
                     'mins_left':   mins_left,
                     'secs_left':   secs_left,
-                    'funding_ts_utc': funding_ts_utc,
+                    'funding_ts_utc': funding_ts_utc.strftime("%Y-%m-%d %H:%M:%S"),
+                    'funding_ts_obj': funding_ts_utc,
                     'h_coin':      h_coin,
                 })
 
             results.sort(key=lambda x: x['raw_diff_num'], reverse=True)
-            bot_state["top5_coins"]        = results[:5]
+            clean_top5 = []
+            for r in results[:5]:
+                item_copy = dict(r)
+                item_copy.pop('funding_ts_obj', None)
+                clean_top5.append(item_copy)
+
+            bot_state["top5_coins"] = clean_top5
             bot_state["total_scanned_coins"] = len(results)
 
             if not results:
@@ -312,7 +319,7 @@ def bot_background_loop():
             coin  = top['coin']
             diff  = top['raw_diff_num']
             secs  = top['secs_left']
-            funding_ts_utc = top['funding_ts_utc']
+            funding_ts_utc = top['funding_ts_obj']
 
             coin_lev      = get_coin_max_leverage(coin)
             coin_notional = margin * coin_lev
@@ -323,7 +330,8 @@ def bot_background_loop():
             bot_state["last_scan_time"]       = now_str
             bot_state["active_top_coin"]      = coin
             bot_state["active_funding_diff"]  = f"{diff:.4f}%"
-            bot_state["next_funding_countdown"] = f"{top['mins_left']}m {secs % 60}s to funding ({top['funding_ts_utc'] + datetime.timedelta(hours=5,minutes=30):%H:%M IST})"
+            target_ist_str = (funding_ts_utc + datetime.timedelta(hours=5, minutes=30)).strftime("%H:%M IST")
+            bot_state["next_funding_countdown"] = f"{top['mins_left']}m {secs % 60}s to funding ({target_ist_str})"
 
             # ── PHASE 3: Entry Window = 60-120 seconds BEFORE funding timestamp ──
             # One trade per (coin, funding_window_key) only
@@ -640,7 +648,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     <div class="grid-metrics">
         <div class="metric-card">
             <span>Paper Wallet Balance</span>
-            <h2 id="val-balance" class="text-cyan">$100.00</h2>
+            <h2 id="val-balance" class="text-cyan">$10.00</h2>
         </div>
         <div class="metric-card">
             <span>Total Net PnL (USD)</span>
@@ -652,7 +660,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
         </div>
         <div class="metric-card">
             <span>Active Top Coin (Spread)</span>
-            <h2 id="val-coin" class="text-green">1000SATS (<span id="val-diff">0.2062%</span>)</h2>
+            <h2 class="text-green"><span id="val-coin">-</span> (<span id="val-diff">0.0000%</span>)</h2>
         </div>
         <div class="metric-card">
             <span>Telegram Alert Status</span>
@@ -765,25 +773,25 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 const res = await fetch('/api/state?t=' + new Date().getTime());
                 const data = await res.json();
 
-                document.getElementById('val-balance').innerText = '$' + data.state.paper_wallet_balance.toFixed(2);
+                if (!data || !data.state) return;
+
+                document.getElementById('val-balance').innerText = '$' + (data.state.paper_wallet_balance || 10.0).toFixed(2);
                 
-                const pnl = data.state.net_pnl_usd;
+                const pnl = data.state.net_pnl_usd || 0.0;
                 const pnlEl = document.getElementById('val-pnl');
                 pnlEl.innerText = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(4);
                 pnlEl.className = pnl >= 0 ? 'text-green' : 'text-red';
 
-                document.getElementById('val-trades').innerText = data.state.total_trades;
+                document.getElementById('val-trades').innerText = data.state.total_trades || 0;
                 
                 const coinEl = document.getElementById('val-coin');
                 const diffEl = document.getElementById('val-diff');
-                if (coinEl && diffEl) {
-                    coinEl.childNodes[0].nodeValue = data.state.active_top_coin + ' (';
-                    diffEl.innerText = data.state.active_funding_diff;
-                }
+                if (coinEl) coinEl.innerText = data.state.active_top_coin || '-';
+                if (diffEl) diffEl.innerText = data.state.active_funding_diff || '0.0000%';
 
-                document.getElementById('val-scan-time').innerText = 'Last Scan: ' + data.state.last_scan_time;
-                document.getElementById('val-countdown').innerText = data.state.next_funding_countdown;
-                document.getElementById('val-tg-status').innerText = data.state.telegram_status;
+                document.getElementById('val-scan-time').innerText = 'Last Scan: ' + (data.state.last_scan_time || 'Just Now');
+                document.getElementById('val-countdown').innerText = data.state.next_funding_countdown || 'Calculating...';
+                document.getElementById('val-tg-status').innerText = data.state.telegram_status || 'Not Configured';
 
                 // Render Top 5 Table
                 const top5Body = document.getElementById('top5-rows');
@@ -815,7 +823,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                     tbody.innerHTML = data.history.map(t => `
                         <tr>
                             <td>${t.id}</td>
-                            <td>${t.timestamp.split(' ')[1]}</td>
+                            <td>${t.timestamp.split(' ')[1] || t.timestamp}</td>
                             <td><strong class="text-cyan">${t.coin}</strong></td>
                             <td class="text-green">${t.gross_income}</td>
                             <td class="text-red">${t.fees}</td>
@@ -828,7 +836,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             }
         }
 
-        setInterval(updateDashboard, 2500);
+        setInterval(updateDashboard, 2000);
         updateDashboard();
     </script>
 </body>
@@ -854,7 +862,7 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                 "logs": live_logs,
                 "history": paper_history
             }
-            self.wfile.write(json.dumps(payload).encode('utf-8'))
+            self.wfile.write(json.dumps(payload, default=str).encode('utf-8'))
         else:
             self.send_response(404)
             self.end_headers()
