@@ -228,6 +228,7 @@ def bot_background_loop():
             results.sort(key=lambda x: x['raw_diff_num'], reverse=True)
 
             bot_state["top5_coins"] = results[:5]
+            bot_state["total_scanned_coins"] = len(results)
 
             if results:
                 top = results[0]
@@ -593,7 +594,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     <!-- MAIN PANEL: REAL-TIME TOP 5 FUNDING DIFFERENCE TABLE -->
     <div class="panel">
         <div class="panel-header">
-            <span>🔥 REAL-TIME TOP 5 FUNDING DIFFERENCE OPPORTUNITIES (DELTA INDIA vs BINANCE vs COINDCX)</span>
+            <span>🔥 REAL-TIME TOP 5 OPPORTUNITIES (SCANNED 187 COINS ACROSS DELTA INDIA, BINANCE & COINDCX)</span>
             <span style="font-size: 11px; color: var(--text-muted);" id="val-scan-time">Last Scan: Just Now</span>
         </div>
         <div class="table-container">
