@@ -1,0 +1,432 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SMC 3-in-1 Dashboard</title>
+    <!-- Apache ECharts -->
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.5.0/dist/echarts.min.js"></script>
+    <style>
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            background-color: #0f172a; 
+            color: #e2e8f0; 
+            font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; 
+            height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+        
+        .header {
+            padding: 15px 20px;
+            background: #1e293b;
+            border-bottom: 1px solid #334155;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        
+        .title { font-size: 1.2rem; font-weight: 600; color: #38bdf8; }
+        
+        .signal-box {
+            padding: 8px 16px;
+            border-radius: 6px;
+            font-weight: 700;
+            background: #334155;
+            transition: all 0.3s;
+        }
+        .signal-box.sell { background: rgba(239, 83, 80, 0.2); color: #ef5350; border: 1px solid rgba(239, 83, 80, 0.5); }
+        .signal-box.buy { background: rgba(76, 175, 80, 0.2); color: #4caf50; border: 1px solid rgba(76, 175, 80, 0.5); }
+        
+        .dashboard-container {
+            display: flex;
+            height: 50vh;
+            width: 100%;
+        }
+        
+        .chart-column {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            border-right: 1px solid #334155;
+            padding: 10px;
+        }
+        .chart-column:last-child { border-right: none; }
+        
+        .column-title {
+            text-align: center;
+            font-size: 1.1rem;
+            font-weight: 600;
+            padding: 5px;
+            color: #cbd5e1;
+            border-bottom: 1px solid #334155;
+            margin-bottom: 10px;
+        }
+        
+        .chart-container {
+            flex: 1;
+            width: 100%;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="header">
+        <div class="title">🚀 SMC Live Tracker (5-Min Order Blocks)</div>
+        <div id="signal-display" class="signal-box">WAITING FOR DATA...</div>
+    </div>
+
+    <div class="dashboard-container">
+        <!-- Nifty -->
+        <div class="chart-column">
+            <div id="title-nifty" class="column-title">NIFTY 50</div>
+            <div id="nifty-chart" class="chart-container"></div>
+        </div>
+        
+        <!-- Bank Nifty -->
+        <div class="chart-column">
+            <div id="title-banknifty" class="column-title">BANK NIFTY</div>
+            <div id="bank-chart" class="chart-container"></div>
+        </div>
+        
+        <!-- Sensex -->
+        <div class="chart-column">
+            <div id="title-sensex" class="column-title">SENSEX</div>
+            <div id="sensex-chart" class="chart-container"></div>
+        </div>
+    </div>
+
+    <script>
+        const charts = {};
+        const chartData = { NIFTY: [], BANKNIFTY: [], SENSEX: [] };
+        
+        const chartOptions = {
+            backgroundColor: 'transparent',
+            animation: false,
+            tooltip: { 
+                trigger: 'axis', 
+                axisPointer: { 
+                    type: 'cross',
+                    animation: false, // 0ms latency
+                    label: { show: true, backgroundColor: '#334155' }
+                } 
+            },
+            grid: { left: 10, right: 65, top: 10, bottom: 30 }, // Y-axis on right
+            dataZoom: [
+                {
+                    type: 'inside', // 1. Horizontal Zooming & Panning
+                    xAxisIndex: [0],
+                    filterMode: 'filter',
+                    start: 50,
+                    end: 100
+                }
+            ],
+            xAxis: {
+                type: 'category',
+                data: [],
+                scale: true,
+                boundaryGap: true,
+                axisLine: { lineStyle: { color: '#475569' } },
+                axisLabel: { color: '#94a3b8' },
+                splitLine: { show: false },
+                axisPointer: { label: { show: true } }
+            },
+            yAxis: {
+                position: 'right', // Match TradingView
+                scale: true,
+                axisLine: { lineStyle: { color: '#475569' } },
+                axisLabel: { color: '#94a3b8' },
+                splitLine: { lineStyle: { color: '#1e293b' } },
+                axisPointer: { label: { show: true } }
+            },
+            series: [
+                {
+                    name: 'Price',
+                    type: 'candlestick',
+                    data: [],
+                    itemStyle: {
+                        color: '#4caf50',
+                        color0: '#ef5350',
+                        borderColor: '#4caf50',
+                        borderColor0: '#ef5350'
+                    }
+                }
+            ]
+        };
+
+        function enableTradingViewControls(chart, sym) {
+            const zr = chart.getZr();
+            let isDraggingY = false;
+            let isDraggingChart = false;
+            let lastY = 0;
+            let lastChartY = 0;
+
+            function getVisibleMinMax() {
+                const data = chartData[sym];
+                if (!data || data.length === 0) return { min: 0, max: 100 };
+                const option = chart.getOption();
+                const zoom = option.dataZoom[0];
+                const startIdx = Math.max(0, Math.floor((zoom.start / 100) * data.length));
+                const endIdx = Math.min(data.length, Math.ceil((zoom.end / 100) * data.length));
+                const visibleData = data.slice(startIdx, endIdx);
+                if (visibleData.length > 0) {
+                    return {
+                        min: Math.min(...visibleData.map(d => d.low)),
+                        max: Math.max(...visibleData.map(d => d.high))
+                    };
+                }
+                return {
+                    min: Math.min(...data.map(d => d.low)),
+                    max: Math.max(...data.map(d => d.high))
+                };
+            }
+
+            // 2. Vertical Stretching & Panning
+            zr.on('mousedown', function(e) {
+                const width = zr.getWidth();
+                // Check if click is on the right-side Y-axis area
+                if (e.offsetX > width - 70) {
+                    isDraggingY = true;
+                    lastY = e.offsetY;
+                } else {
+                    isDraggingChart = true;
+                    lastChartY = e.offsetY;
+                }
+            });
+
+            zr.on('mousemove', function(e) {
+                if (isDraggingY) {
+                    const dy = e.offsetY - lastY;
+                    lastY = e.offsetY;
+                    
+                    const option = chart.getOption();
+                    let currentMin = option.yAxis[0].min;
+                    let currentMax = option.yAxis[0].max;
+                    
+                    if (currentMin == null || currentMax == null) {
+                        const bounds = getVisibleMinMax();
+                        currentMin = bounds.min; currentMax = bounds.max;
+                    }
+                    
+                    const range = currentMax - currentMin;
+                    const scale = 1 + (dy * 0.015);
+                    const newRange = Math.max(range * scale, 0.1);
+                    const center = (currentMax + currentMin) / 2;
+                    
+                    chart.setOption({
+                        yAxis: {
+                            min: center - newRange / 2,
+                            max: center + newRange / 2
+                        }
+                    });
+                } 
+                else if (isDraggingChart) {
+                    const dy = e.offsetY - lastChartY;
+                    lastChartY = e.offsetY;
+                    
+                    const option = chart.getOption();
+                    let currentMin = option.yAxis[0].min;
+                    let currentMax = option.yAxis[0].max;
+                    
+                    if (currentMin == null || currentMax == null) {
+                        const bounds = getVisibleMinMax();
+                        currentMin = bounds.min; currentMax = bounds.max;
+                    }
+                    
+                    const range = currentMax - currentMin;
+                    // Pan chart up/down
+                    const height = zr.getHeight();
+                    const shift = (dy / height) * range;
+                    
+                    chart.setOption({
+                        yAxis: {
+                            min: currentMin + shift,
+                            max: currentMax + shift
+                        }
+                    });
+                }
+            });
+
+            zr.on('mouseup', function() { isDraggingY = false; isDraggingChart = false; });
+            zr.on('mouseout', function() { isDraggingY = false; isDraggingChart = false; });
+
+            // Y-Axis Wheel Zoom (Tradingview behavior)
+            zr.dom.addEventListener('wheel', function(e) {
+                const width = zr.getWidth();
+                // Check if cursor is on the right-side Y-axis area
+                if (e.offsetX > width - 70) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    
+                    const option = chart.getOption();
+                    let currentMin = option.yAxis[0].min;
+                    let currentMax = option.yAxis[0].max;
+                    
+                    if (currentMin == null || currentMax == null) {
+                        const bounds = getVisibleMinMax();
+                        currentMin = bounds.min; currentMax = bounds.max;
+                    }
+                    
+                    const range = currentMax - currentMin;
+                    const scale = 1 + (e.deltaY * 0.0015);
+                    const newRange = Math.max(range * scale, 0.1);
+                    const center = (currentMax + currentMin) / 2;
+                    
+                    chart.setOption({
+                        yAxis: {
+                            min: center - newRange / 2,
+                            max: center + newRange / 2
+                        }
+                    });
+                }
+            }, { passive: false });
+
+            // 3. Double Click to Reset Auto-Fit
+            zr.on('dblclick', function() {
+                chart.dispatchAction({ type: 'dataZoom', start: 50, end: 100 });
+                chart.setOption({
+                    yAxis: { min: null, max: null }
+                });
+            });
+        }
+
+        ['NIFTY', 'BANKNIFTY', 'SENSEX'].forEach(sym => {
+            let id = `${sym.toLowerCase()}-chart`;
+            if (sym === 'BANKNIFTY') id = 'bank-chart';
+            
+            const container = document.getElementById(id);
+            if (container) {
+                const chart = echarts.init(container);
+                chart.setOption(chartOptions);
+                enableTradingViewControls(chart, sym);
+                charts[sym] = chart;
+            }
+        });
+        
+        // Format timestamp
+        function formatTime(unixSeconds) {
+            const d = new Date(unixSeconds * 1000);
+            return d.getDate() + ' ' + d.toLocaleString('default', {month: 'short'}) + ' ' + 
+                   d.getHours().toString().padStart(2, '0') + ':' + d.getMinutes().toString().padStart(2, '0');
+        }
+
+        function renderChart(sym) {
+            if(!charts[sym] || !chartData[sym].length) return;
+            
+            const times = chartData[sym].map(c => formatTime(c.time));
+            const candles = chartData[sym].map(c => [c.open, c.close, c.low, c.high]); // ECharts format
+            
+            const markPoints = [];
+            for (let i = 1; i < chartData[sym].length; i++) {
+                const prev = chartData[sym][i-1];
+                const curr = chartData[sym][i];
+                
+                const body = prev.close - prev.open;
+                const range = prev.high - prev.low;
+                
+                if (body < -15 && range > 30) {
+                    if (curr.high >= prev.open && curr.close < prev.open) {
+                        markPoints.push({
+                            name: 'Bearish OB',
+                            coord: [times[i], curr.high],
+                            value: '⬇ OB',
+                            itemStyle: { color: '#ef5350' },
+                            symbolOffset: [0, '-50%']
+                        });
+                    }
+                } else if (body > 15 && range > 30) {
+                    if (curr.low <= prev.open && curr.close > prev.open) {
+                        markPoints.push({
+                            name: 'Bullish OB',
+                            coord: [times[i], curr.low],
+                            value: '⬆ OB',
+                            itemStyle: { color: '#4caf50' },
+                            symbolOffset: [0, '50%']
+                        });
+                    }
+                }
+            }
+
+            charts[sym].setOption({
+                xAxis: { data: times },
+                series: [{ 
+                    data: candles,
+                    markPoint: {
+                        data: markPoints,
+                        symbol: 'arrow',
+                        symbolSize: 12,
+                        label: { show: false }
+                    }
+                }]
+            });
+            
+            // Update Title Live Price
+            const lastCandle = chartData[sym][chartData[sym].length - 1];
+            const titleEl = document.getElementById(`title-${sym.toLowerCase()}`);
+            if (titleEl) {
+                const isUp = lastCandle.close >= lastCandle.open;
+                const color = isUp ? '#4caf50' : '#ef5350';
+                titleEl.innerHTML = `${sym.replace('BANKNIFTY', 'BANK NIFTY').replace('NIFTY', 'NIFTY 50')} <span style="color:${color}; margin-left:10px;">${lastCandle.close.toFixed(2)}</span>`;
+            }
+        }
+
+        // WebSocket Connection
+        function connectWS() {
+            const ws = new WebSocket('ws://localhost:8001/ws/dashboard');
+            
+            ws.onmessage = (event) => {
+                const msg = JSON.parse(event.data);
+                
+                if (msg.type === "history") {
+                    // Load historical data
+                    for (const [sym, candles] of Object.entries(msg.data)) {
+                        chartData[sym] = candles;
+                        renderChart(sym);
+                    }
+                } 
+                else if (msg.type === "live") {
+                    // Update running candles
+                    for (const [sym, running] of Object.entries(msg.running_candles)) {
+                        if (!chartData[sym].length) continue;
+                        
+                        const lastCandle = chartData[sym][chartData[sym].length - 1];
+                        
+                        if (running.time === lastCandle.time) {
+                            // Update existing current candle
+                            chartData[sym][chartData[sym].length - 1] = running;
+                        } else if (running.time > lastCandle.time) {
+                            // Append new candle
+                            chartData[sym].push(running);
+                            if (chartData[sym].length > 500) chartData[sym].shift();
+                        }
+                        
+                        renderChart(sym);
+                    }
+                    
+                    // Update Signal
+                    const sigBox = document.getElementById('signal-display');
+                    sigBox.innerText = msg.signal.status + (msg.signal.details ? ' - ' + msg.signal.details : '');
+                    
+                    sigBox.className = 'signal-box';
+                    if (msg.signal.status.includes('SELL')) sigBox.classList.add('sell');
+                    else if (msg.signal.status.includes('BUY')) sigBox.classList.add('buy');
+                }
+            };
+            
+            ws.onclose = () => {
+                document.getElementById('signal-display').innerText = "DISCONNECTED - RECONNECTING...";
+                document.getElementById('signal-display').className = 'signal-box sell';
+                setTimeout(connectWS, 3000);
+            };
+        }
+
+        connectWS();
+        
+        // Window Resize
+        window.addEventListener('resize', () => {
+            Object.values(charts).forEach(c => c.resize());
+        });
+    </script>
+</body>
+</html>

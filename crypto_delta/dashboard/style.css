@@ -1,0 +1,83 @@
+/* BTC Hedging Terminal - Dark Theme */
+:root {
+    --bg-primary: #0a0e17;
+    --bg-card: rgba(15, 21, 35, 0.85);
+    --border: rgba(255, 255, 255, 0.08);
+    --text-primary: #e8ecf4;
+    --text-secondary: #8b95a8;
+    --green: #22d68a;
+    --red: #ff4466;
+    --blue: #00d4ff;
+    --amber: #ffb830;
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+    font-family: 'Courier New', monospace;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    padding: 20px;
+}
+
+.container { max-width: 1200px; margin: 0 auto; }
+
+h1 {
+    color: var(--blue);
+    text-align: center;
+    margin-bottom: 20px;
+}
+
+.grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+    gap: 20px;
+}
+
+.card {
+    background: var(--bg-card);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 20px;
+}
+
+.card h2 {
+    color: var(--blue);
+    font-size: 14px;
+    margin-bottom: 15px;
+    text-transform: uppercase;
+}
+
+.metric {
+    display: flex;
+    justify-content: space-between;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.metric:last-child { border-bottom: none; }
+
+.metric-label { color: var(--text-secondary); }
+.metric-value { font-weight: bold; }
+
+.positive { color: var(--green); }
+.negative { color: var(--red); }
+.neutral { color: var(--amber); }
+
+.btn {
+    background: var(--blue);
+    color: var(--bg-primary);
+    border: none;
+    padding: 10px 20px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: bold;
+    margin: 5px;
+}
+
+.btn:hover { background: #4d8bff; }
+
+.btn-secondary { background: var(--text-secondary); color: var(--bg-primary); }
+
+.controls { text-align: center; margin: 20px 0; }

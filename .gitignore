@@ -1,6 +1,12 @@
 __pycache__/
 *.pyc
 venv/
+.venv/
 .env
-cross_paper_history.json
-bot_status.json
+*.csv
+*.pkl
+*.pt
+*.zip
+*.json
+!telegram_config.json
+!render.yaml

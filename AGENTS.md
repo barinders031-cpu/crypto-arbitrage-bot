@@ -3,38 +3,78 @@
 ## Core Trading Rules (Saved Principles)
 
 ### 1. Strategy Definition & Contract Selection
-- **Strategy:** Conversion & Reversal Arbitrage (Delta-Neutral).
+- **Strategy:** Cross-Exchange Perpetual Funding Rate Arbitrage (Delta-Neutral).
 - **Legs Combination:**
-  - Leg 1: **BUY/SELL Futures** (`ETHUSD` / `BTCUSD`)
-  - Leg 2: **SELL/BUY Call Option** (`C-ETH-*` / `C-BTC-*`)
-  - Leg 3: **BUY/SELL Put Option** (`P-ETH-*` / `P-BTC-*`)
+  - Leg 1: **Perpetual Futures on Delta Exchange India** (Long/Short)
+  - Leg 2: **Perpetual Futures on CoinDCX** (Short/Long - Exact Symmetrical Match)
 
 ### 2. Exact Contract Sizing Unit
-- Sizing Unit in Strategy Builder: **`Lot`**
+- Sizing Unit in Strategy Builder: **`Lot` / Base Coin Quantity**
 - **Contract Value Equivalents:**
   - **1 Lot ETH = 0.01 ETH** (10 Lots = 0.1 ETH, 100 Lots = 1.0 ETH)
   - **1 Lot BTC = 0.001 BTC** (10 Lots = 0.01 BTC, 100 Lots = 0.1 BTC)
 
-### 3. Empirical Fee Benchmark (Inc. GST)
-- **1 Lot ETH (0.01 ETH):**
-  - Futures Entry Fee: ~$0.011 USD
-  - Call Option Fee: ~$0.002 USD
-  - Put Option Fee: ~$0.002 USD
-  - **Total Entry Fee Per 1 Lot (0.01 ETH):** **$0.015 USD (~1.5 Cents)**
-- **10 Lots ETH (0.1 ETH):** Total Entry Fee = **$0.15 USD (~15 Cents)**
-- **1 Lot BTC (0.001 BTC):** Total Entry Fee = **$0.05 USD (~5 Cents)**
+### 3. Empirical Fee Benchmark & Scalper Protocol (Inc. 18% GST)
+- **Delta Exchange Scalper Offer (0% Exit Fee):**
+  - Trade duration is <10 seconds (`T-1` entry, `09:00:02` exit).
+  - Triggers Delta's official **Scalper Offer**, waiving **100% of Delta exit fees ($0.00)** on every single trade!
+- **Individual Fee Schedules (Inc. 18% GST):**
+  - Delta Taker Entry: `0.059%` | Delta Scalper Exit: `0.000%` (FREE)
+  - CoinDCX Taker Entry: `0.059%` | CoinDCX Maker Exit: `0.0236%` | CoinDCX Taker Exit: `0.059%`
+- **Combined Dual-Leg Roundtrip Fee Scenarios:**
+  - **Scenario 1 (Hybrid Taker Entry + Scalper & Maker Exit):** **`~0.1416%`** ($0.14 USD per $100 notional per exchange).
+  - **Scenario 2 (Emergency Market Taker Exit):** **`~0.1770%`** ($0.18 USD per $100 notional per exchange).
+  - **Scenario 3 (Pure Maker Entry & Exit):** **`~0.0708%`** ($0.07 USD per $100 notional per exchange).
 
-### 4. Mandatory Filter: 50% Profit Retention Rule
-- **Condition:** $\text{Gross Profit per 1 Lot} \ge 2 \times \text{Total Entry Fee}$
-- **For 1 Lot ETH (0.01 ETH):**
-  $$\text{Gross Profit per 1 Lot} \ge 2 \times \$0.015 = \mathbf{\$0.03 \text{ USD (3 Cents)}}$$
-  $$\text{Net Profit per 1 Lot} = \text{Gross Profit} - \$0.015 \ge \$0.015 \text{ USD}$$
-- **For 10 Lots ETH (0.1 ETH):**
-  $$\text{Gross Profit per 10 Lots} \ge \mathbf{\$0.30 \text{ USD (30 Cents)}}$$
-- **Trade Filter Decision:**
-  - If Strategy Payoff Max Profit for 10 Lots $< \$0.30 \text{ USD} \implies$ **REJECT TRADE ❌**
-  - If Strategy Payoff Max Profit for 10 Lots $\ge \$0.30 \text{ USD} \implies$ **ACCEPT TRADE ✅**
 
-### 5. Execution & Settlement
-- **Limit Orders (Maker):** Always place limit orders at orderbook Mid-Prices $\frac{\text{Bid} + \text{Ask}}{2}$ for best fill & fee rebates.
-- **Auto Settlement:** Hold position until Expiry Date for zero-fee cash settlement.
+### 4. Mandatory Filter: Fee-Adjusted Net Profit Gate
+- **Funding Spread Arithmetic Formula:**
+  - **Same-Sign Rates (Both `+` OR Both `-`):** **Subtract / Minus** to find difference: $|R_1 - R_2|$ (e.g. $+0.7\% \text{ and } +0.2\% \implies 0.7\% - 0.2\% = \mathbf{0.5\% \text{ Gross Spread}}$).
+  - **Opposite-Sign Rates (One `+` AND One `-`):** **Add / Plus** both magnitudes: $|R_1| + |R_2|$ (e.g. $+0.7\% \text{ and } -0.2\% \implies 0.7\% + 0.2\% = \mathbf{0.9\% \text{ Gross Spread}}$).
+- **Mandatory Fee Deduction Gate:**
+  - $\text{Net Profit} = \text{Gross Spread} - \text{Total Roundtrip Fee (0.1416\%)}$
+  - If $\text{Net Profit} > 0$ ($\text{Gross Spread} \ge 0.15\%$) $\implies$ **ACCEPT TRADE ✅**
+  - If $\text{Net Profit} \le 0$ ($\text{Gross Spread} < 0.15\%$) $\implies$ **REJECT TRADE ❌ (DO NOT TRADE!)**
+
+### 5. Cross-Exchange Perpetual Funding Arbitrage & Double-Yield Harvest Protocol
+- **#1 Highest Funding Scanner:** Continuously scan all coins across exchanges and select ONLY the single **#1 highest funding rate difference coin** for execution.
+- **Double Funding Yield Harvest Logic:**
+  - **Case A (Delta Positive `+` & CoinDCX Negative `-`):** 
+    - **SELL (SHORT) Delta** $\rightarrow$ Collects Positive Funding from Delta Longs!
+    - **BUY (LONG) CoinDCX** $\rightarrow$ Collects Negative Funding from CoinDCX Shorts!
+    - *Result:* Dual-exchange funding collection!
+  - **Case B (Delta Negative `-` & CoinDCX Positive `+`):** 
+    - **BUY (LONG) Delta** $\rightarrow$ Collects Negative Funding from Delta Shorts!
+    - **SELL (SHORT) CoinDCX** $\rightarrow$ Collects Positive Funding from CoinDCX Longs!
+  - **Case C (Same Sign `+/+` or `-/-`):** 
+    - Open **SHORT** on Higher Positive Rate Exchange & **LONG** on Lower Rate Exchange $\rightarrow$ Collects Net Interest Difference!
+- **Pre-Timestamp Entry Rule:** All entry operations MUST complete **1–2 minutes before** the exact funding timestamp.
+- **Exact Quantity Leg Matching:**
+  - When Leg 1 fills (on either Delta or CoinDCX), DO NOT CUT! Instantly execute Leg 2 with the **EXACT SAME QUANTITY** so both legs match 100%.
+- **Symmetrical Market Fallback Protocol:**
+  - If neither limit order fills by `T-45s`, cancel both limit orders $\rightarrow$ **Fire INSTANT MARKET ORDERS ON BOTH EXCHANGES SIMULTANEOUSLY** to guarantee 100% filled entry before funding!
+
+
+### 6. Instant 2-3 Second Post-Funding Exit & PnL Neutrality (0.01% - 0.05%)
+- **Exact Funding Snapshot:** Backend snapshot locks funding entitlement at exact `00.000` seconds of the funding hour.
+- **Rapid 2–3 Second Exit Rule:** Exit BOTH exchanges simultaneously within **2 to 3 seconds after funding** (`09:00:02` – `09:00:03`).
+- **Neutrality Constraint (0.01% - 0.05% Allowed Variation):**
+  - Both legs MUST be entered and exited with strict priority on **Dual-Leg PnL Neutrality**.
+  - Allowed PnL variation between Leg A (+1%) and Leg B (-1%) is strictly kept within **`0.01% - 0.05%`**.
+  - **Purpose of Constraint:** Protect 100% of the earned Net Funding Profit (e.g. +$0.50 USD on 0.9% spread) from being eaten up by price slippage on exit, ensuring maximum retained cash profit!
+
+
+### 7. 10% Balance Drawdown Emergency Safety Override
+- **Balance PnL Safety Trigger:**
+  - If position drawdown reaches **≥ 10% of total account/margin balance** during exit attempt:
+  - **IMMEDIATE OVERRIDE:** Fire Instant Market Exit Orders on BOTH exchanges to preserve neutrality and eliminate liquidation risk.
+
+### 8. Universal Base Asset Quantity Sizing Protocol (USD vs USDT Equalizer)
+- **Core Principle:** Do NOT size by USD/USDT dollars! Size strictly by **Base Coin Quantity ($Q_{base}$)** (e.g. `ETH`, `BTC`, `AIOT`).
+- **Standardized Sizing Algorithm:**
+  1. Calculate Target Base Quantity: $Q_{base} = \frac{\text{Target Notional USD}}{\text{Mark Price}_{\text{Delta}}}$
+  2. Convert to Delta Lots: $L_{\text{Delta}} = \text{round}\left(\frac{Q_{base}}{\text{Lot Size}_{\text{Delta}}}\right)$
+  3. Calculate Exact Hedged Coin Quantity: $Q_{exact} = L_{\text{Delta}} \times \text{Lot Size}_{\text{Delta}}$
+  4. Match CoinDCX Sizing: Set CoinDCX Order Quantity = $Q_{exact}$ down to 0.0001 precision.
+- **Result:** $Q_{\text{Delta}} = +Q_{exact}$ and $Q_{\text{CoinDCX}} = -Q_{exact} \implies \text{Net Delta} = 0.0000$ (100% Perfect Market Price Protection).
+- **Margin Equalizer:** Both exchanges maintain matching margin allocation because physical crypto asset quantity is 100% identical!

@@ -18,8 +18,8 @@ import threading
 import time
 import os
 
-PORT = 5050
-CONFIG_FILE = "e:/nse/telegram_config.json"
+PORT = int(os.environ.get("PORT", 5050))
+CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "telegram_config.json")
 
 # In-Memory State
 live_logs = []
@@ -45,6 +45,20 @@ def get_telegram_config():
         except Exception:
             pass
     return {"bot_token": "", "chat_id": "", "enabled": False}
+
+def auto_detect_chat_id(bot_token):
+    try:
+        url = f"https://api.telegram.org/bot{bot_token}/getUpdates"
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+        res = urllib.request.urlopen(req, timeout=6)
+        data = json.loads(res.read().decode())
+        result = data.get('result', [])
+        for update in reversed(result):
+            if 'message' in update and 'chat' in update['message']:
+                return str(update['message']['chat']['id'])
+    except Exception:
+        pass
+    return ""
 
 def send_telegram_alert(text):
     creds = get_telegram_config()
@@ -100,7 +114,7 @@ def bot_background_loop():
     margin = 10.0      # $10 Margin each exchange
     leverage = 10.0    # 10x Leverage
     notional = margin * leverage  # $100 Notional per exchange ($200 Total Trade Size)
-    total_roundtrip_fee = 0.40   # $0.40 USD entry+exit fee for $200 notional
+    total_roundtrip_fee = 0.14   # $0.14 USD total fee ($0.059% Delta Taker + 0% Scalper Exit + 0.0826% CoinDCX Entry+Maker Exit)
 
     def next_funding_info(interval_hours, now):
         h = int(interval_hours)
@@ -146,8 +160,9 @@ def bot_background_loop():
                     h = delta_interval.get(sym, 8.0)
                     delta_map[coin] = {'rate': rate_pct, 'h': h, 'sym': sym, 'mark': mark}
 
-            # Fetch CoinDCX
+            # Fetch Binance & CoinDCX
             binance_funding = fetch("https://fapi.binance.com/fapi/v1/premiumIndex")
+            binance_map = {}
             coindcx_map = {}
             for b in binance_funding:
                 sym = b.get('symbol', '')
@@ -155,18 +170,27 @@ def bot_background_loop():
                     coin = sym.replace('USDT', '')
                     rate_pct = float(b.get('lastFundingRate') or 0) * 100.0
                     mark = float(b.get('markPrice') or 0)
+                    binance_map[coin] = {'rate': rate_pct, 'sym': sym, 'mark': mark}
                     coindcx_map[coin] = {'rate': rate_pct, 'h': 8.0, 'sym': f"B-{sym}", 'mark': mark}
 
             results = []
             for coin, d in delta_map.items():
                 if coin in coindcx_map:
                     c = coindcx_map[coin]
-                    diff = abs(d['rate'] - c['rate'])
-                    
-                    if d['rate'] >= 0:
-                        action = "SHORT Delta + LONG CoinDCX"
-                    else:
-                        action = "LONG Delta + SHORT CoinDCX"
+                    b_item = binance_map.get(coin, c)
+
+                    r_d = d['rate']
+                    r_c = c['rate']
+                    r_b = b_item['rate']
+
+                    # 3-Way Pairwise Combination Evaluator
+                    pairs = [
+                        (abs(r_d - r_c), "Delta vs CoinDCX", f"SHORT Delta + LONG CoinDCX" if r_d >= r_c else f"LONG Delta + SHORT CoinDCX"),
+                        (abs(r_d - r_b), "Delta vs Binance", f"SHORT Delta + LONG Binance" if r_d >= r_b else f"LONG Delta + SHORT Binance"),
+                        (abs(r_b - r_c), "Binance vs CoinDCX", f"SHORT Binance + LONG CoinDCX" if r_b >= r_c else f"LONG Binance + SHORT CoinDCX"),
+                    ]
+                    pairs.sort(key=lambda x: x[0], reverse=True)
+                    best_diff, best_pair_name, best_action = pairs[0]
 
                     delta_h = d['h']
                     next_time_str, mins_left = next_funding_info(delta_h, now)
@@ -182,12 +206,14 @@ def bot_background_loop():
                         'delta_sym': d['sym'],
                         'delta_rate': f"{d['rate']:+.4f}% ({d['h']:.0f}H)",
                         'delta_mark': d['mark'],
+                        'binance_sym': b_item['sym'],
+                        'binance_rate': f"{b_item['rate']:+.4f}%",
                         'cdcx_sym': c['sym'],
                         'cdcx_rate': f"{c['rate']:+.4f}% ({c['h']:.0f}H)",
                         'cdcx_mark': c['mark'],
-                        'raw_diff_num': diff,
-                        'diff': f"{diff:.4f}%",
-                        'action': action,
+                        'raw_diff_num': best_diff,
+                        'diff': f"{best_diff:.4f}%",
+                        'action': best_action,
                         'next_funding': timing_label,
                         'mins_left': mins_left
                     })
@@ -199,19 +225,13 @@ def bot_background_loop():
             if results:
                 top = results[0]
                 coin = top['coin']
-                d_rate = float(top['delta_rate'].split('%')[0])
-                c_rate = float(top['cdcx_rate'].split('%')[0])
                 diff = top['raw_diff_num']
 
                 bot_state["last_scan_time"] = now_str
                 bot_state["active_top_coin"] = coin
                 bot_state["active_funding_diff"] = f"{diff:.4f}%"
 
-                if d_rate >= 0:
-                    gross_funding = notional * (d_rate / 100.0) - notional * (c_rate / 100.0)
-                else:
-                    gross_funding = notional * (abs(d_rate) / 100.0) + notional * (abs(c_rate) / 100.0)
-
+                gross_funding = notional * (diff / 100.0)
                 net_pnl = gross_funding - total_roundtrip_fee
 
                 next_hour = (now.hour + (4 - (now.hour % 4))) % 24
@@ -268,7 +288,7 @@ def bot_background_loop():
         except Exception as e:
             add_log(f"Error in background loop: {e}")
 
-        time.sleep(15)
+        time.sleep(1)
 
 # Start background thread
 threading.Thread(target=bot_background_loop, daemon=True).start()
@@ -512,8 +532,8 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
     <header>
         <div class="title-box">
-            <h1>Cross-Exchange Arbitrage Dashboard</h1>
-            <p>Delta Exchange India vs CoinDCX • Live Top 5 Scanner & Telegram Alerts</p>
+            <h1>Multi-Exchange Arbitrage Dashboard</h1>
+            <p>Delta Exchange India vs Binance Futures vs CoinDCX • Live Scanner & Telegram Alerts</p>
         </div>
         <div class="status-badge">
             <div class="status-dot"></div>
@@ -536,7 +556,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
         </div>
         <div class="metric-card">
             <span>Active Top Coin (Spread)</span>
-            <h2 id="val-coin" class="text-green">AIOT (<span id="val-diff">0.1699%</span>)</h2>
+            <h2 id="val-coin" class="text-green">1000SATS (<span id="val-diff">0.2062%</span>)</h2>
         </div>
         <div class="metric-card">
             <span>Telegram Alert Status</span>
@@ -560,7 +580,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
     <!-- MAIN PANEL: REAL-TIME TOP 5 FUNDING DIFFERENCE TABLE -->
     <div class="panel">
         <div class="panel-header">
-            <span>🔥 REAL-TIME TOP 5 FUNDING DIFFERENCE OPPORTUNITIES (DELTA vs COINDCX)</span>
+            <span>🔥 REAL-TIME TOP 5 FUNDING DIFFERENCE OPPORTUNITIES (DELTA INDIA vs BINANCE vs COINDCX)</span>
             <span style="font-size: 11px; color: var(--text-muted);" id="val-scan-time">Last Scan: Just Now</span>
         </div>
         <div class="table-container">
@@ -569,15 +589,16 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                     <tr>
                         <th>#</th>
                         <th>Coin</th>
-                        <th>Delta Instrument & Rate</th>
-                        <th>CoinDCX Instrument & Rate</th>
-                        <th>Raw Spread</th>
-                        <th>Next Funding Settlement</th>
-                        <th>RECOMMENDED ACTION (BUY / SELL)</th>
+                        <th>Delta India Rate</th>
+                        <th>Binance Futures Rate</th>
+                        <th>CoinDCX Futures Rate</th>
+                        <th>Max Spread</th>
+                        <th>Next Settlement</th>
+                        <th>RECOMMENDED ACTION</th>
                     </tr>
                 </thead>
                 <tbody id="top5-rows">
-                    <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Fetching live top 5 funding opportunities...</td></tr>
+                    <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Fetching live top 5 funding opportunities...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -621,10 +642,10 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
     <script>
         async function saveTelegram() {
-            const token = document.getElementById('tg-token').value;
-            const chat = document.getElementById('tg-chat').value;
-            if(!token || !chat) {
-                alert("Please enter both Bot Token and Chat ID!");
+            const token = document.getElementById('tg-token').value.trim();
+            const chat = document.getElementById('tg-chat').value.trim();
+            if(!token) {
+                alert("Please enter your Telegram Bot Token!");
                 return;
             }
             const res = await fetch('/api/telegram', {
@@ -634,7 +655,12 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             });
             const d = await res.json();
             if(d.status === 'ok') {
-                alert("Telegram Trade Alerts Successfully Configured!");
+                document.getElementById('tg-chat').value = d.chat_id;
+                alert("🎉 Success! Telegram Trade Alerts Successfully Linked to Chat ID: " + d.chat_id);
+            } else if(d.status === 'need_message') {
+                alert("⚠️ Auto-Detect Hint: Please open your bot on Telegram and send 1 message (e.g. 'hi'), then click this button again!");
+            } else {
+                alert("Error linking Telegram. Please check your Bot Token!");
             }
         }
 
@@ -671,6 +697,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                             <td><strong>${idx + 1}</strong></td>
                             <td><strong class="text-cyan">${item.coin}</strong></td>
                             <td>${item.delta_sym} (<span class="text-green">${item.delta_rate}</span>)</td>
+                            <td>${item.binance_sym} (<span class="text-cyan">${item.binance_rate}</span>)</td>
                             <td>${item.cdcx_sym} (<span class="text-yellow">${item.cdcx_rate}</span>)</td>
                             <td><strong class="text-green">${item.diff}</strong></td>
                             <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">${item.next_funding || '-'}</td>
@@ -742,13 +769,18 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             post_data = self.rfile.read(content_length)
             data = json.loads(post_data.decode('utf-8'))
             
-            bot_token = data.get('bot_token', '')
-            chat_id = data.get('chat_id', '')
+            bot_token = data.get('bot_token', '').strip()
+            chat_id = data.get('chat_id', '').strip()
             enabled = data.get('enabled', True)
 
+            if not chat_id and bot_token:
+                detected_id = auto_detect_chat_id(bot_token)
+                if detected_id:
+                    chat_id = detected_id
+
             cfg = {
-                "bot_token": bot_token.strip(),
-                "chat_id": chat_id.strip(),
+                "bot_token": bot_token,
+                "chat_id": chat_id,
                 "enabled": enabled
             }
             with open(CONFIG_FILE, 'w') as f:
@@ -757,10 +789,12 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok"}).encode('utf-8'))
             
-            # Send test notification
-            send_telegram_alert("🔔 *Telegram Trade Notification Successfully Linked to Arbitrage Bot!*")
+            if chat_id:
+                self.wfile.write(json.dumps({"status": "ok", "chat_id": chat_id}).encode('utf-8'))
+                send_telegram_alert("🔔 *Telegram Trade Notification Successfully Linked to Arbitrage Bot!*")
+            else:
+                self.wfile.write(json.dumps({"status": "need_message", "message": "Please send 1 message to your bot on Telegram, then try again!"}).encode('utf-8'))
 
     def log_message(self, format, *args):
         return

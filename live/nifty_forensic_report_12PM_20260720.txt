@@ -1,0 +1,23 @@
+--------------------------------------------------------------------------------
+🔍 NIFTY MARKET FORENSIC REPORT (Morning Session: 09:15 AM to 12:00 PM)
+Generated At: 2026-07-20 14:07:25
+--------------------------------------------------------------------------------
+📊 MACRO SESSION SUMMARY:
+   • Session Open Spot : 24,200.00
+   • Session High Spot : 24,264.55
+   • Session Low Spot  : 24,136.35
+   • 12:00 PM Spot     : 24,263.20 (Net Move: +63.20 Pts)
+
+🏛️ TOP HEAVYWEIGHTS POINT CONTRIBUTION:
+   • HDFC Bank (11.5% Weight) : -829.50 (-95.39 Nifty Pts)
+   • Reliance  (9.8% Weight)  : -1793.50 (-175.76 Nifty Pts)
+   • ICICI Bank (7.8% Weight) : +244.70 (+19.09 Nifty Pts)
+   • Infosys   (5.8% Weight)  : -759.80 (-44.07 Nifty Pts)
+   • TCS       (3.8% Weight)  : -1945.10 (-73.91 Nifty Pts)
+
+🎯 OPTION WRITER TRAPS & SHORT COVERING:
+   • Total CE Cum Change : -899,990 Qty
+   • Total PE Cum Change : +2,169,115 Qty
+   • Morning End PCR     : 1.17
+
+--------------------------------------------------------------------------------

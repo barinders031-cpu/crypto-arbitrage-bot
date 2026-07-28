@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BTC Hedging Terminal</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Courier New', monospace;
+            background: #0a0e17;
+            color: #e8ecf4;
+            padding: 20px;
+        }
+        .container { max-width: 1200px; margin: 0 auto; }
+        h1 {
+            color: #00d4ff;
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+        }
+        .card {
+            background: rgba(15, 21, 35, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 12px;
+            padding: 20px;
+        }
+        .card h2 {
+            color: #00d4ff;
+            font-size: 14px;
+            margin-bottom: 15px;
+            text-transform: uppercase;
+        }
+        .metric {
+            display: flex;
+            justify-content: space-between;
+            padding: 8px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        .metric:last-child { border-bottom: none; }
+        .metric-label { color: #8b95a8; }
+        .metric-value { color: #e8ecf4; font-weight: bold; }
+        .positive { color: #22d68a; }
+        .negative { color: #ff4466; }
+        .neutral { color: #ffb830; }
+        .btn {
+            background: #00d4ff;
+            color: #0a0e17;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 6px;
+            cursor: pointer;
+            font-family: inherit;
+            font-weight: bold;
+            margin: 5px;
+        }
+        .btn:hover { background: #4d8bff; }
+        .btn-secondary { background: #8b95a8; }
+        .controls {
+            text-align: center;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🛡️ BTC HEDGING TERMINAL</h1>
+
+        <div class="controls">
+            <button class="btn" onclick="scan()">Scan Now</button>
+            <button class="btn btn-secondary" onclick="backtest()">Backtest</button>
+        </div>
+
+        <div class="grid">
+            <div class="card">
+                <h2>Market State</h2>
+                <div id="market">
+                    <div class="metric">
+                        <span class="metric-label">BTC Spot</span>
+                        <span class="metric-value" id="spot">--</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">24h Change</span>
+                        <span class="metric-value" id="change">--</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Volatility</span>
+                        <span class="metric-value" id="volatility">--</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Trend</span>
+                        <span class="metric-value" id="trend">--</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Portfolio Greeks</h2>
+                <div id="greeks">
+                    <div class="metric">
+                        <span class="metric-label">Delta</span>
+                        <span class="metric-value" id="delta">0.000</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Gamma</span>
+                        <span class="metric-value" id="gamma">0.000</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Theta</span>
+                        <span class="metric-value" id="theta">$0.00/day</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Vega</span>
+                        <span class="metric-value" id="vega">0.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Active Strategy</h2>
+                <div id="strategy">
+                    <div class="metric">
+                        <span class="metric-label">Strategy</span>
+                        <span class="metric-value" id="strategy-name">--</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Status</span>
+                        <span class="metric-value" id="strategy-status">--</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Capital</span>
+                        <span class="metric-value" id="capital">$10.00</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Opportunities</h2>
+                <div id="opportunities">
+                    <div class="metric">
+                        <span class="metric-label">Found</span>
+                        <span class="metric-value" id="opp-count">--</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Best Strategy</span>
+                        <span class="metric-value" id="best-strategy">--</span>
+                    </div>
+                    <div class="metric">
+                        <span class="metric-label">Max Loss</span>
+                        <span class="metric-value" id="max-loss">--</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        async function scan() {
+            try {
+                const response = await fetch('/api/scan');
+                const data = await response.json();
+                updateUI(data);
+            } catch (e) {
+                console.error('Scan failed:', e);
+            }
+        }
+
+        function backtest() {
+            alert('Backtest running... Check terminal for results');
+        }
+
+        function updateUI(data) {
+            if (data.market) {
+                document.getElementById('spot').textContent = '$' + data.market.spot.toFixed(2);
+                document.getElementById('change').textContent = (data.market.change || 0).toFixed(2) + '%';
+                document.getElementById('volatility').textContent = (data.market.volatility || 0).toFixed(2);
+                document.getElementById('trend').textContent = data.market.trend || '--';
+            }
+
+            if (data.greeks) {
+                document.getElementById('delta').textContent = data.greeks.delta.toFixed(3);
+                document.getElementById('gamma').textContent = data.greeks.gamma.toFixed(3);
+                document.getElementById('theta').textContent = '$' + data.greeks.theta.toFixed(2) + '/day';
+                document.getElementById('vega').textContent = data.greeks.vega.toFixed(2);
+            }
+
+            if (data.opportunities && data.opportunities.length > 0) {
+                const best = data.opportunities[0];
+                document.getElementById('opp-count').textContent = data.opportunities.length;
+                document.getElementById('best-strategy').textContent = best.strategy;
+                document.getElementById('max-loss').textContent = '$' + (best.setup.max_loss || 0).toFixed(2);
+            }
+        }
+
+        // Auto-scan every 30 seconds
+        setInterval(scan, 30000);
+        scan();
+    </script>
+</body>
+</html>
