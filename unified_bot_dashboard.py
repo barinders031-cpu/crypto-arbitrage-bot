@@ -138,169 +138,251 @@ def bot_background_loop():
         mins_left = int((target_utc - now_utc).total_seconds() // 60)
         return target_ist.strftime("%H:%M IST"), mins_left
 
+    # Track which (coin, funding_timestamp_utc) pairs already executed this cycle
+    executed_windows = set()
+    # Track pending trade awaiting exit (entry done, waiting for T+2sec after funding)
+    pending_exit = None   # dict: {coin, top, gross_funding, coin_fee, net_pnl, coin_lev, coin_notional, funding_ts_utc, entry_time}
+
     while True:
         try:
             now = datetime.datetime.now()
+            now_utc = now - datetime.timedelta(hours=5, minutes=30)
             now_str = now.strftime("%Y-%m-%d %H:%M:%S")
 
             creds = get_telegram_config()
             bot_state["telegram_status"] = "Active 🟢" if creds.get("enabled") and creds.get("bot_token") else "Not Configured ⚪"
-            
-            # Fetch Delta
+
+            # ── PHASE 1: If pending exit, wait for T+2 seconds after funding snapshot ──
+            if pending_exit:
+                pe = pending_exit
+                secs_after_funding = (now_utc - pe["funding_ts_utc"]).total_seconds()
+                if secs_after_funding >= 2.0:
+                    # Execute scalper exit NOW
+                    coin    = pe["coin"]
+                    top     = pe["top"]
+                    gross   = pe["gross_funding"]
+                    fee     = pe["coin_fee"]
+                    net     = pe["net_pnl"]
+                    lev     = pe["coin_lev"]
+                    notl    = pe["coin_notional"]
+                    diff    = pe["diff"]
+
+                    bot_state["paper_wallet_balance"] += net
+                    bot_state["net_pnl_usd"]          += net
+                    bot_state["total_trades"]          += 1
+
+                    trade_entry = {
+                        "id":         bot_state["total_trades"],
+                        "timestamp":  now_str,
+                        "coin":       coin,
+                        "gross_income": f"+${gross:.4f}",
+                        "fees":         f"-${fee:.4f}",
+                        "net_pnl":      f"+${net:.4f}",
+                        "balance":      f"${bot_state['paper_wallet_balance']:.2f}"
+                    }
+                    paper_history.insert(0, trade_entry)
+
+                    add_log(f"⚡ [SCALPER EXIT T+{secs_after_funding:.1f}s] Dual-Leg Neutral Exit fired for {coin} (0% Delta Exit Fee Waiver).")
+                    add_log(f"✅ {lev:.0f}X TRADE COMPLETE ({coin}): Gross +${gross:.4f} | Fees -${fee:.4f} | NET +${net:.4f} USD | Balance ${bot_state['paper_wallet_balance']:.2f}")
+
+                    tg_msg = (
+                        f"🚨 *PRECISION TIMED ARBITRAGE COMPLETE* 🚀\n\n"
+                        f"🪙 *Coin:* `{coin}`\n"
+                        f"📊 *Strategy:* `{top['action']}`\n"
+                        f"⏱️ *Timing:* `Entry T-1min → Snapshot T+0s → Scalper Exit T+{secs_after_funding:.1f}s`\n"
+                        f"⚙️ *Margin & Leverage:* `$10.00 @ {lev:.0f}x (${notl:.0f} Notional/leg)`\n"
+                        f"⚡ *Spread:* `{diff:.4f}%`\n\n"
+                        f"💵 *Gross Funding:* `+${gross:.4f} USD`\n"
+                        f"🏷️ *Roundtrip Fees:* `-${fee:.4f} USD`\n"
+                        f"📈 *NET CASH PROFIT:* `+${net:.4f} USD`\n"
+                        f"💰 *New Virtual Balance:* `${bot_state['paper_wallet_balance']:.2f} USD`"
+                    )
+                    send_telegram_alert(tg_msg)
+                    pending_exit = None
+                else:
+                    add_log(f"🔒 [FUNDING SNAPSHOT LOCKED] Waiting for T+2s scalper exit... ({secs_after_funding:.1f}s elapsed)")
+                    time.sleep(0.5)
+                    continue
+
+            # ── PHASE 2: Fetch live data ──
             delta_products = fetch("https://api.india.delta.exchange/v2/products")
-            delta_tickers = fetch("https://api.india.delta.exchange/v2/tickers")
-            
+            delta_tickers  = fetch("https://api.india.delta.exchange/v2/tickers")
+
             delta_interval = {}
             for p in delta_products:
-                sym = p.get('symbol', '')
+                sym  = p.get('symbol', '')
                 specs = p.get('product_specs') or {}
-                rei = specs.get('rate_exchange_interval')
+                rei   = specs.get('rate_exchange_interval')
                 delta_interval[sym] = int(rei) / 3600.0 if rei else 8.0
 
             delta_map = {}
             for t in delta_tickers:
                 if 'perpetual' in t.get('contract_type', ''):
-                    sym = t.get('symbol', '')
+                    sym      = t.get('symbol', '')
                     rate_pct = float(t.get('funding_rate') or 0)
-                    mark = float(t.get('mark_price') or 0)
-                    coin = sym.replace('USD', '')
-                    h = delta_interval.get(sym, 8.0)
+                    mark     = float(t.get('mark_price') or 0)
+                    coin     = sym.replace('USD', '')
+                    h        = delta_interval.get(sym, 8.0)
                     delta_map[coin] = {'rate': rate_pct, 'h': h, 'sym': sym, 'mark': mark}
 
-            # Fetch Binance & CoinDCX
             binance_funding = fetch("https://fapi.binance.com/fapi/v1/premiumIndex")
             binance_map = {}
             coindcx_map = {}
             for b in binance_funding:
                 sym = b.get('symbol', '')
                 if sym.endswith('USDT'):
-                    coin = sym.replace('USDT', '')
+                    coin     = sym.replace('USDT', '')
                     rate_pct = float(b.get('lastFundingRate') or 0) * 100.0
-                    mark = float(b.get('markPrice') or 0)
+                    mark     = float(b.get('markPrice') or 0)
                     binance_map[coin] = {'rate': rate_pct, 'sym': sym, 'mark': mark}
                     coindcx_map[coin] = {'rate': rate_pct, 'h': 8.0, 'sym': f"B-{sym}", 'mark': mark}
 
             results = []
             for coin, d in delta_map.items():
-                if coin in coindcx_map:
-                    c = coindcx_map[coin]
-                    b_item = binance_map.get(coin, c)
+                if coin not in coindcx_map:
+                    continue
+                c      = coindcx_map[coin]
+                b_item = binance_map.get(coin, c)
+                r_d, r_c, r_b = d['rate'], c['rate'], b_item['rate']
 
-                    r_d = d['rate']
-                    r_c = c['rate']
-                    r_b = b_item['rate']
+                pairs = [
+                    (abs(r_d - r_c), "Delta vs CoinDCX", f"SHORT Delta + LONG CoinDCX" if r_d >= r_c else "LONG Delta + SHORT CoinDCX"),
+                    (abs(r_d - r_b), "Delta vs Binance",  f"SHORT Delta + LONG Binance"  if r_d >= r_b else "LONG Delta + SHORT Binance"),
+                    (abs(r_b - r_c), "Binance vs CoinDCX",f"SHORT Binance + LONG CoinDCX" if r_b >= r_c else "LONG Binance + SHORT CoinDCX"),
+                ]
+                pairs.sort(key=lambda x: x[0], reverse=True)
+                best_diff, _, best_action = pairs[0]
 
-                    # 3-Way Pairwise Combination Evaluator
-                    pairs = [
-                        (abs(r_d - r_c), "Delta vs CoinDCX", f"SHORT Delta + LONG CoinDCX" if r_d >= r_c else f"LONG Delta + SHORT CoinDCX"),
-                        (abs(r_d - r_b), "Delta vs Binance", f"SHORT Delta + LONG Binance" if r_d >= r_b else f"LONG Delta + SHORT Binance"),
-                        (abs(r_b - r_c), "Binance vs CoinDCX", f"SHORT Binance + LONG CoinDCX" if r_b >= r_c else f"LONG Binance + SHORT CoinDCX"),
-                    ]
-                    pairs.sort(key=lambda x: x[0], reverse=True)
-                    best_diff, best_pair_name, best_action = pairs[0]
+                # ── Per-coin actual funding timestamp (UTC) ──
+                h_coin = d['h']
+                h_int  = int(h_coin)
+                next_settlement_h_utc = ((now_utc.hour // h_int) + 1) * h_int
+                overflow_days = 0
+                if next_settlement_h_utc >= 24:
+                    next_settlement_h_utc -= 24
+                    overflow_days = 1
+                funding_ts_utc = now_utc.replace(
+                    hour=next_settlement_h_utc, minute=0, second=0, microsecond=0
+                ) + datetime.timedelta(days=overflow_days)
+                if funding_ts_utc <= now_utc:
+                    funding_ts_utc += datetime.timedelta(hours=h_int)
 
-                    delta_h = d['h']
-                    next_time_str, mins_left = next_funding_info(delta_h, now)
-                    if mins_left <= 2:
-                        timing_label = f"🔴 NOW! {next_time_str}"
-                    elif mins_left <= 10:
-                        timing_label = f"🟡 {mins_left}m → {next_time_str}"
-                    else:
-                        timing_label = f"🟢 {mins_left}m → {next_time_str}"
-                        
-                    results.append({
-                        'coin': coin,
-                        'delta_sym': d['sym'],
-                        'delta_rate': f"{d['rate']:+.4f}% ({d['h']:.0f}H)",
-                        'delta_mark': d['mark'],
-                        'binance_sym': b_item['sym'],
-                        'binance_rate': f"{b_item['rate']:+.4f}%",
-                        'cdcx_sym': c['sym'],
-                        'cdcx_rate': f"{c['rate']:+.4f}% ({c['h']:.0f}H)",
-                        'cdcx_mark': c['mark'],
-                        'raw_diff_num': best_diff,
-                        'diff': f"{best_diff:.4f}%",
-                        'action': best_action,
-                        'next_funding': timing_label,
-                        'mins_left': mins_left
-                    })
+                mins_left = int((funding_ts_utc - now_utc).total_seconds() // 60)
+                secs_left = int((funding_ts_utc - now_utc).total_seconds())
+                target_ist = funding_ts_utc + datetime.timedelta(hours=5, minutes=30)
+                time_label = target_ist.strftime("%H:%M IST")
+
+                if mins_left <= 2:
+                    timing_label = f"🔴 NOW! {time_label}"
+                elif mins_left <= 10:
+                    timing_label = f"🟡 {mins_left}m → {time_label}"
+                else:
+                    timing_label = f"🟢 {mins_left}m → {time_label}"
+
+                results.append({
+                    'coin':        coin,
+                    'delta_sym':   d['sym'],
+                    'delta_rate':  f"{d['rate']:+.4f}% ({h_coin:.0f}H)",
+                    'delta_mark':  d['mark'],
+                    'binance_sym': b_item['sym'],
+                    'binance_rate':f"{b_item['rate']:+.4f}%",
+                    'cdcx_sym':    c['sym'],
+                    'cdcx_rate':   f"{c['rate']:+.4f}% ({c['h']:.0f}H)",
+                    'cdcx_mark':   c['mark'],
+                    'raw_diff_num':best_diff,
+                    'diff':        f"{best_diff:.4f}%",
+                    'action':      best_action,
+                    'next_funding':timing_label,
+                    'mins_left':   mins_left,
+                    'secs_left':   secs_left,
+                    'funding_ts_utc': funding_ts_utc,
+                    'h_coin':      h_coin,
+                })
 
             results.sort(key=lambda x: x['raw_diff_num'], reverse=True)
-
-            bot_state["top5_coins"] = results[:5]
+            bot_state["top5_coins"]        = results[:5]
             bot_state["total_scanned_coins"] = len(results)
 
-            if results:
-                top = results[0]
-                coin = top['coin']
-                diff = top['raw_diff_num']
+            if not results:
+                add_log("⚠️ No common coins found. Retrying...")
+                time.sleep(5)
+                continue
 
-                coin_lev = get_coin_max_leverage(coin)
-                coin_notional = margin * coin_lev
-                coin_fee = coin_notional * (0.1416 / 100.0)
+            top   = results[0]
+            coin  = top['coin']
+            diff  = top['raw_diff_num']
+            secs  = top['secs_left']
+            funding_ts_utc = top['funding_ts_utc']
 
-                bot_state["last_scan_time"] = now_str
-                bot_state["active_top_coin"] = coin
-                bot_state["active_funding_diff"] = f"{diff:.4f}%"
+            coin_lev      = get_coin_max_leverage(coin)
+            coin_notional = margin * coin_lev
+            coin_fee      = coin_notional * (0.1416 / 100.0)
+            gross_funding = coin_notional * (diff / 100.0)
+            net_pnl       = gross_funding - coin_fee
 
-                gross_funding = coin_notional * (diff / 100.0)
-                net_pnl = gross_funding - coin_fee
+            bot_state["last_scan_time"]       = now_str
+            bot_state["active_top_coin"]      = coin
+            bot_state["active_funding_diff"]  = f"{diff:.4f}%"
+            bot_state["next_funding_countdown"] = f"{top['mins_left']}m {secs % 60}s to funding ({top['funding_ts_utc'] + datetime.timedelta(hours=5,minutes=30):%H:%M IST})"
 
-                next_hour = (now.hour + (4 - (now.hour % 4))) % 24
-                mins_remaining = ((next_hour - now.hour) % 24) * 60 - now.minute
-                if mins_remaining <= 0:
-                    mins_remaining += 240
+            # ── PHASE 3: Entry Window = 60-120 seconds BEFORE funding timestamp ──
+            # One trade per (coin, funding_window_key) only
+            funding_window_key = f"{coin}_{funding_ts_utc.strftime('%Y%m%d%H%M')}"
+            is_entry_window    = 60 <= secs <= 120   # between T-120s and T-60s
+            already_executed   = funding_window_key in executed_windows
 
-                bot_state["next_funding_countdown"] = f"{mins_remaining} mins to next settlement"
+            # Clean up old window keys (older than 2 hours)
+            cutoff = now_utc - datetime.timedelta(hours=2)
+            executed_windows = {k for k in executed_windows
+                                if datetime.datetime.strptime(k.split('_')[1], '%Y%m%d%H%M')
+                                   .replace(tzinfo=None) > cutoff}
 
-                is_1min_before_funding = (now.minute in [28, 29, 58, 59])
+            if is_entry_window and not already_executed:
+                if net_pnl > 0:
+                    add_log(f"⚡ [ENTRY T-{secs}s] Dual-Leg entry FIRED for {coin} ({coin_lev:.0f}x | Notional ${coin_notional:.0f})")
+                    add_log(f"   Delta: {top['delta_rate']} | CoinDCX: {top['cdcx_rate']} | Spread: {diff:.4f}%")
+                    add_log(f"   Gross Funding: +${gross_funding:.4f} | Fees: -${coin_fee:.4f} | NET: +${net_pnl:.4f}")
+                    add_log(f"   Strategy: {top['action']}")
 
-                if is_1min_before_funding:
-                    if net_pnl > 0:
-                        add_log(f"⚡ [ENTRY T-1 MIN] Firing Leg 1 & Leg 2 simultaneously for {coin} ({coin_lev:.0f}x Max Lev)...")
-                        add_log(f"🔒 [FUNDING SNAPSHOT 00.000] Entitlement locked. Collecting gross funding (+${gross_funding:.4f} USD)...")
-                        add_log(f"⚡ [SCALPER EXIT T+2 SEC] Firing Dual-Leg Neutral Exit (0% Delta Scalper Fee Waiver Applied)...")
-                        
-                        bot_state["paper_wallet_balance"] += net_pnl
-                        bot_state["net_pnl_usd"] += net_pnl
-                        bot_state["total_trades"] += 1
+                    tg_entry = (
+                        f"⚡ *ENTRY FIRED — T-{secs}s BEFORE FUNDING*\n\n"
+                        f"🪙 *Coin:* `{coin}`\n"
+                        f"📊 *Strategy:* `{top['action']}`\n"
+                        f"⚙️ *Leverage:* `{coin_lev:.0f}x | ${coin_notional:.0f} Notional/leg`\n"
+                        f"⚡ *Spread:* `{diff:.4f}%`\n"
+                        f"🕐 *Funding in:* `{secs}s`\n\n"
+                        f"💵 *Expected Gross:* `+${gross_funding:.4f}`\n"
+                        f"🏷️ *Expected Fees:* `-${coin_fee:.4f}`\n"
+                        f"📈 *Expected NET:* `+${net_pnl:.4f} USD`"
+                    )
+                    send_telegram_alert(tg_entry)
 
-                        trade_entry = {
-                            "id": bot_state["total_trades"],
-                            "timestamp": now_str,
-                            "coin": coin,
-                            "gross_income": f"+${gross_funding:.4f}",
-                            "fees": f"-${coin_fee:.4f}",
-                            "net_pnl": f"+${net_pnl:.4f}",
-                            "balance": f"${bot_state['paper_wallet_balance']:.2f}"
-                        }
+                    executed_windows.add(funding_window_key)
 
-                        paper_history.insert(0, trade_entry)
-                        log_msg = f"✅ {coin_lev:.0f}X DUAL-LEG SYNC SUCCESSFUL ({coin}): Net PnL: +${net_pnl:.4f} USD"
-                        add_log(log_msg)
-
-                        # Send Telegram Notification
-                        tg_msg = (
-                            f"🚨 *PRECISION TIMED ARBITRAGE EXECUTED* 🚀\n\n"
-                            f"🪙 *Coin:* `{coin}`\n"
-                            f"📊 *Strategy Action:* `{top['action']}`\n"
-                            f"⏱️ *Execution Timing:* `Entry @ T-1min | Exit @ T+2sec (Scalper Mode)`\n"
-                            f"⚙️ *Margin & Max Leverage:* `$10.00 USD @ {coin_lev:.0f}x ($ {coin_notional:.0f} Notional/leg)`\n"
-                            f"⚡ *Raw Spread Difference:* `{diff:.4f}%`\n\n"
-                            f"💵 *Gross Funding Yield:* `+${gross_funding:.4f} USD`\n"
-                            f"🏷️ *Roundtrip Dual-Leg Fees:* `-${coin_fee:.4f} USD`\n"
-                            f"📈 *NET CASH PROFIT:* `+${net_pnl:.4f} USD`\n"
-                            f"💰 *New Virtual Balance:* `${bot_state['paper_wallet_balance']:.2f} USD`"
-                        )
-                        send_telegram_alert(tg_msg)
-
-                    else:
-                        add_log(f"⚠️ FUNDING WINDOW REACHED FOR {coin}: Gross (+${gross_funding:.4f}) <= Fees (-${coin_fee:.4f}). Skipped.")
+                    # Queue exit at T+2s (simulate funding snapshot + scalper exit)
+                    pending_exit = {
+                        "coin":          coin,
+                        "top":           top,
+                        "gross_funding": gross_funding,
+                        "coin_fee":      coin_fee,
+                        "net_pnl":       net_pnl,
+                        "coin_lev":      coin_lev,
+                        "coin_notional": coin_notional,
+                        "diff":          diff,
+                        "funding_ts_utc": funding_ts_utc,
+                        "entry_time":    now_utc,
+                    }
                 else:
-                    add_log(f"Scan complete. Top Coin: {coin} (Spread: {diff:.4f}%) | Action: {top['action']} | Standing by...")
+                    add_log(f"⚠️ [{coin} T-{secs}s] SKIP — Net PnL (${net_pnl:.4f}) negative after fees. Gross ${gross_funding:.4f} < Fee ${coin_fee:.4f}.")
+                    executed_windows.add(funding_window_key)  # skip this window
+
+            elif already_executed:
+                add_log(f"🔒 [{coin}] Window already executed. Standing by for next funding cycle...")
+            else:
+                add_log(f"🔍 Scan OK | Top: {coin} | Spread: {diff:.4f}% | Action: {top['action']} | Funding in: {top['mins_left']}m {secs%60}s | Net after fees: ${net_pnl:.4f}")
 
         except Exception as e:
-            add_log(f"Error in background loop: {e}")
+            add_log(f"❌ Error in bot loop: {e}")
 
         time.sleep(1)
 
