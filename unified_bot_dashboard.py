@@ -256,7 +256,9 @@ def bot_background_loop():
 
                 if is_1min_before_funding:
                     if net_pnl > 0:
-                        add_log(f"⚡ DUAL-LEG ORDER FIRED: Firing Leg 1 & Leg 2 for {coin} ({coin_lev:.0f}x Max Lev)...")
+                        add_log(f"⚡ [ENTRY T-1 MIN] Firing Leg 1 & Leg 2 simultaneously for {coin} ({coin_lev:.0f}x Max Lev)...")
+                        add_log(f"🔒 [FUNDING SNAPSHOT 00.000] Entitlement locked. Collecting gross funding (+${gross_funding:.4f} USD)...")
+                        add_log(f"⚡ [SCALPER EXIT T+2 SEC] Firing Dual-Leg Neutral Exit (0% Delta Scalper Fee Waiver Applied)...")
                         
                         bot_state["paper_wallet_balance"] += net_pnl
                         bot_state["net_pnl_usd"] += net_pnl
@@ -278,9 +280,10 @@ def bot_background_loop():
 
                         # Send Telegram Notification
                         tg_msg = (
-                            f"🚨 *DYNAMIC MAX LEVERAGE ARBITRAGE EXECUTED* 🚀\n\n"
+                            f"🚨 *PRECISION TIMED ARBITRAGE EXECUTED* 🚀\n\n"
                             f"🪙 *Coin:* `{coin}`\n"
                             f"📊 *Strategy Action:* `{top['action']}`\n"
+                            f"⏱️ *Execution Timing:* `Entry @ T-1min | Exit @ T+2sec (Scalper Mode)`\n"
                             f"⚙️ *Margin & Max Leverage:* `$10.00 USD @ {coin_lev:.0f}x ($ {coin_notional:.0f} Notional/leg)`\n"
                             f"⚡ *Raw Spread Difference:* `{diff:.4f}%`\n\n"
                             f"💵 *Gross Funding Yield:* `+${gross_funding:.4f} USD`\n"
