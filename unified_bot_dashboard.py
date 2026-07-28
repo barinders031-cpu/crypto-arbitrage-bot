@@ -26,7 +26,7 @@ live_logs = []
 paper_history = []
 bot_state = {
     "status": "DUAL-LEG SAFEGUARD ACTIVE",
-    "paper_wallet_balance": 100.0,
+    "paper_wallet_balance": 10.0,
     "total_trades": 0,
     "net_pnl_usd": 0.0,
     "last_scan_time": "-",
@@ -111,10 +111,10 @@ def bot_background_loop():
     
     add_log("Bot Engine Initialized with Real-Time Top 5 Difference Scanner, Safeguards & Telegram Alerts.")
     
-    margin = 10.0      # $10 Margin each exchange
-    leverage = 10.0    # 10x Leverage
-    notional = margin * leverage  # $100 Notional per exchange ($200 Total Trade Size)
-    total_roundtrip_fee = 0.14   # $0.14 USD total fee ($0.059% Delta Taker + 0% Scalper Exit + 0.0826% CoinDCX Entry+Maker Exit)
+    margin = 10.0        # $10 Margin each exchange
+    leverage = 100.0     # 100x Leverage
+    notional = margin * leverage  # $1000 Notional per exchange ($2000 Total Trade Size)
+    total_roundtrip_fee = 1.416   # $1.416 USD total fee ($0.059% Delta Taker + 0% Scalper Exit + 0.0826% CoinDCX Entry+Maker Exit on $1000 notional)
 
     def next_funding_info(interval_hours, now):
         h = int(interval_hours)
@@ -255,28 +255,27 @@ def bot_background_loop():
                             "id": bot_state["total_trades"],
                             "timestamp": now_str,
                             "coin": coin,
-                            "delta_rate": f"{d_rate:+.4f}%",
-                            "cdcx_rate": f"{c_rate:+.4f}%",
                             "gross_income": f"+${gross_funding:.4f}",
-                            "fees": f"-${total_roundtrip_fee:.2f}",
+                            "fees": f"-${total_roundtrip_fee:.4f}",
                             "net_pnl": f"+${net_pnl:.4f}",
                             "balance": f"${bot_state['paper_wallet_balance']:.2f}"
                         }
 
                         paper_history.insert(0, trade_entry)
-                        log_msg = f"✅ DUAL-LEG SYNC SUCCESSFUL ({coin}): Net PnL: +${net_pnl:.4f} USD"
+                        log_msg = f"✅ 100X DUAL-LEG SYNC SUCCESSFUL ({coin}): Net PnL: +${net_pnl:.4f} USD"
                         add_log(log_msg)
 
                         # Send Telegram Notification
                         tg_msg = (
-                            f"🚨 *ARBITRAGE TRADE EXECUTED* 🚀\n\n"
+                            f"🚨 *100X ARBITRAGE TRADE EXECUTED* 🚀\n\n"
                             f"🪙 *Coin:* `{coin}`\n"
                             f"📊 *Strategy Action:* `{top['action']}`\n"
-                            f"⚡ *Spread Difference:* `{diff:.4f}%`\n\n"
-                            f"💵 *Gross Funding:* `+${gross_funding:.4f}`\n"
-                            f"🏷️ *Entry+Exit Fees:* `-${total_roundtrip_fee:.2f}`\n"
-                            f"📈 *NET PROFIT (PnL):* `+${net_pnl:.4f} USD`\n"
-                            f"💰 *Wallet Balance:* `${bot_state['paper_wallet_balance']:.2f}`"
+                            f"⚙️ *Margin & Leverage:* `$10.00 USD @ 100x ($1,000 Notional/leg)`\n"
+                            f"⚡ *Raw Spread Difference:* `{diff:.4f}%`\n\n"
+                            f"💵 *Gross Funding Yield:* `+${gross_funding:.4f} USD`\n"
+                            f"🏷️ *Roundtrip Dual-Leg Fees:* `-${total_roundtrip_fee:.4f} USD`\n"
+                            f"📈 *NET CASH PROFIT:* `+${net_pnl:.4f} USD`\n"
+                            f"💰 *New Virtual Balance:* `${bot_state['paper_wallet_balance']:.2f} USD`"
                         )
                         send_telegram_alert(tg_msg)
 
