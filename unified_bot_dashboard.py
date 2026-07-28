@@ -106,15 +106,21 @@ def add_log(msg):
     if len(live_logs) > 100:
         live_logs.pop(0)
 
+def get_coin_max_leverage(coin):
+    c = coin.upper()
+    if c in ['BTC', 'ETH']:
+        return 100.0
+    elif c in ['SOL', 'XRP', 'DOGE', 'BNB', '1000SATS', 'ADA', 'AVAX', 'LINK', 'NEAR', 'SUI', 'PEPE', 'SHIB', 'WIF']:
+        return 50.0
+    else:
+        return 20.0
+
 def bot_background_loop():
     global paper_history, bot_state
     
-    add_log("Bot Engine Initialized with Real-Time Top 5 Difference Scanner, Safeguards & Telegram Alerts.")
+    add_log("Bot Engine Initialized with Dynamic Exchange Max Leverage, Safeguards & Telegram Alerts.")
     
-    margin = 10.0        # $10 Margin each exchange
-    leverage = 100.0     # 100x Leverage
-    notional = margin * leverage  # $1000 Notional per exchange ($2000 Total Trade Size)
-    total_roundtrip_fee = 1.416   # $1.416 USD total fee ($0.059% Delta Taker + 0% Scalper Exit + 0.0826% CoinDCX Entry+Maker Exit on $1000 notional)
+    margin = 10.0        # $10 Margin per exchange
 
     def next_funding_info(interval_hours, now):
         h = int(interval_hours)
@@ -123,13 +129,14 @@ def bot_background_loop():
         next_settlement_hour_utc = ((current_hour_utc // h) + 1) * h
         if next_settlement_hour_utc >= 24:
             next_settlement_hour_utc -= 24
-            next_date = now_utc.date() + datetime.timedelta(days=1)
-        else:
-            next_date = now_utc.date()
-        next_utc = datetime.datetime.combine(next_date, datetime.time(next_settlement_hour_utc, 0, 0))
-        next_ist = next_utc + datetime.timedelta(hours=5, minutes=30)
-        mins_left = int((next_utc - now_utc).total_seconds() / 60)
-        return next_ist.strftime("%H:%M IST"), mins_left
+        
+        target_utc = now_utc.replace(hour=next_settlement_hour_utc, minute=0, second=0, microsecond=0)
+        if target_utc <= now_utc:
+            target_utc += datetime.timedelta(days=1)
+            
+        target_ist = target_utc + datetime.timedelta(hours=5, minutes=30)
+        mins_left = int((target_utc - now_utc).total_seconds() // 60)
+        return target_ist.strftime("%H:%M IST"), mins_left
 
     while True:
         try:
@@ -227,12 +234,16 @@ def bot_background_loop():
                 coin = top['coin']
                 diff = top['raw_diff_num']
 
+                coin_lev = get_coin_max_leverage(coin)
+                coin_notional = margin * coin_lev
+                coin_fee = coin_notional * (0.1416 / 100.0)
+
                 bot_state["last_scan_time"] = now_str
                 bot_state["active_top_coin"] = coin
                 bot_state["active_funding_diff"] = f"{diff:.4f}%"
 
-                gross_funding = notional * (diff / 100.0)
-                net_pnl = gross_funding - total_roundtrip_fee
+                gross_funding = coin_notional * (diff / 100.0)
+                net_pnl = gross_funding - coin_fee
 
                 next_hour = (now.hour + (4 - (now.hour % 4))) % 24
                 mins_remaining = ((next_hour - now.hour) % 24) * 60 - now.minute
@@ -245,7 +256,7 @@ def bot_background_loop():
 
                 if is_1min_before_funding:
                     if net_pnl > 0:
-                        add_log(f"⚡ DUAL-LEG ORDER FIRED: Firing Leg 1 (Delta) & Leg 2 (CoinDCX) simultaneously...")
+                        add_log(f"⚡ DUAL-LEG ORDER FIRED: Firing Leg 1 & Leg 2 for {coin} ({coin_lev:.0f}x Max Lev)...")
                         
                         bot_state["paper_wallet_balance"] += net_pnl
                         bot_state["net_pnl_usd"] += net_pnl
@@ -256,31 +267,31 @@ def bot_background_loop():
                             "timestamp": now_str,
                             "coin": coin,
                             "gross_income": f"+${gross_funding:.4f}",
-                            "fees": f"-${total_roundtrip_fee:.4f}",
+                            "fees": f"-${coin_fee:.4f}",
                             "net_pnl": f"+${net_pnl:.4f}",
                             "balance": f"${bot_state['paper_wallet_balance']:.2f}"
                         }
 
                         paper_history.insert(0, trade_entry)
-                        log_msg = f"✅ 100X DUAL-LEG SYNC SUCCESSFUL ({coin}): Net PnL: +${net_pnl:.4f} USD"
+                        log_msg = f"✅ {coin_lev:.0f}X DUAL-LEG SYNC SUCCESSFUL ({coin}): Net PnL: +${net_pnl:.4f} USD"
                         add_log(log_msg)
 
                         # Send Telegram Notification
                         tg_msg = (
-                            f"🚨 *100X ARBITRAGE TRADE EXECUTED* 🚀\n\n"
+                            f"🚨 *DYNAMIC MAX LEVERAGE ARBITRAGE EXECUTED* 🚀\n\n"
                             f"🪙 *Coin:* `{coin}`\n"
                             f"📊 *Strategy Action:* `{top['action']}`\n"
-                            f"⚙️ *Margin & Leverage:* `$10.00 USD @ 100x ($1,000 Notional/leg)`\n"
+                            f"⚙️ *Margin & Max Leverage:* `$10.00 USD @ {coin_lev:.0f}x ($ {coin_notional:.0f} Notional/leg)`\n"
                             f"⚡ *Raw Spread Difference:* `{diff:.4f}%`\n\n"
                             f"💵 *Gross Funding Yield:* `+${gross_funding:.4f} USD`\n"
-                            f"🏷️ *Roundtrip Dual-Leg Fees:* `-${total_roundtrip_fee:.4f} USD`\n"
+                            f"🏷️ *Roundtrip Dual-Leg Fees:* `-${coin_fee:.4f} USD`\n"
                             f"📈 *NET CASH PROFIT:* `+${net_pnl:.4f} USD`\n"
                             f"💰 *New Virtual Balance:* `${bot_state['paper_wallet_balance']:.2f} USD`"
                         )
                         send_telegram_alert(tg_msg)
 
                     else:
-                        add_log(f"⚠️ FUNDING WINDOW REACHED FOR {coin}: Gross (+${gross_funding:.4f}) <= Fees (-${total_roundtrip_fee:.2f}). Skipped.")
+                        add_log(f"⚠️ FUNDING WINDOW REACHED FOR {coin}: Gross (+${gross_funding:.4f}) <= Fees (-${coin_fee:.4f}). Skipped.")
                 else:
                     add_log(f"Scan complete. Top Coin: {coin} (Spread: {diff:.4f}%) | Action: {top['action']} | Standing by...")
 
