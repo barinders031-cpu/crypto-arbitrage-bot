@@ -123,16 +123,72 @@ def send_telegram_alert(text):
         add_log(f"Telegram alert error: {e}")
         return False
 
-def fetch(url):
-    req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
+def fetch(url, timeout=6):
+    req = urllib.request.Request(
+        url,
+        headers={
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept': 'application/json'
+        }
+    )
     try:
-        res = urllib.request.urlopen(req, timeout=6)
+        res = urllib.request.urlopen(req, timeout=timeout)
         data = json.loads(res.read().decode())
         if isinstance(data, dict) and 'result' in data:
             return data['result']
         return data
     except Exception:
         return []
+
+def fetch_coindcx_binance_funding():
+    """Fetches perpetual funding rates from Binance or global fallback exchanges (Gate.io / MEXC) when deployed on cloud hosts (e.g. Render US)."""
+    # 1. Binance Direct
+    data = fetch("https://fapi.binance.com/fapi/v1/premiumIndex")
+    if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and 'lastFundingRate' in data[0]:
+        return data
+
+    # 2. Binance via Public AllOrigins Proxy
+    data = fetch("https://api.allorigins.win/raw?url=https%3A%2F%2Ffapi.binance.com%2Ffapi%2Fv1%2FpremiumIndex")
+    if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and 'lastFundingRate' in data[0]:
+        return data
+
+    # 3. Gate.io Futures Fallback
+    gate_data = fetch("https://api.gateio.ws/api/v4/futures/usdt/tickers")
+    if isinstance(gate_data, list) and len(gate_data) > 0:
+        converted = []
+        for item in gate_data:
+            sym = item.get('name', '').replace('_', '')
+            rate = item.get('funding_rate', '0')
+            mark = item.get('mark_price', '0')
+            converted.append({'symbol': sym, 'lastFundingRate': rate, 'markPrice': mark})
+        return converted
+
+    # 4. MEXC Futures Fallback
+    mexc_resp = fetch("https://contract.mexc.com/api/v1/contract/ticker")
+    items = mexc_resp.get('data', []) if isinstance(mexc_resp, dict) else []
+    if isinstance(items, list) and len(items) > 0:
+        converted = []
+        for item in items:
+            sym = item.get('symbol', '').replace('_', '')
+            rate = item.get('fundingRate', 0)
+            mark = item.get('fairPrice', 0)
+            converted.append({'symbol': sym, 'lastFundingRate': rate, 'markPrice': mark})
+        return converted
+
+    return []
+
+def fetch_delta_data():
+    """Fetches product specs and tickers from Delta Exchange with fallback domain."""
+    urls = [
+        ("https://api.india.delta.exchange/v2/products", "https://api.india.delta.exchange/v2/tickers"),
+        ("https://api.delta.exchange/v2/products", "https://api.delta.exchange/v2/tickers"),
+    ]
+    for p_url, t_url in urls:
+        products = fetch(p_url)
+        tickers  = fetch(t_url)
+        if isinstance(products, list) and isinstance(tickers, list) and len(products) > 0 and len(tickers) > 0:
+            return products, tickers
+    return [], []
 
 def add_log(msg):
     ts = datetime.datetime.now().strftime("%H:%M:%S")
@@ -168,6 +224,8 @@ def bot_background_loop():
 
     executed_windows = set()
     pending_exit = None
+    last_valid_results = []
+    retry_count = 0
 
     while True:
         try:
@@ -230,8 +288,7 @@ def bot_background_loop():
                     continue
 
             # ── PHASE 2: Fetch Live Rates ──
-            delta_products = fetch("https://api.india.delta.exchange/v2/products")
-            delta_tickers  = fetch("https://api.india.delta.exchange/v2/tickers")
+            delta_products, delta_tickers = fetch_delta_data()
 
             delta_interval = {}
             for p in delta_products:
@@ -246,17 +303,22 @@ def bot_background_loop():
                     sym      = t.get('symbol', '')
                     rate_pct = float(t.get('funding_rate') or 0)
                     mark     = float(t.get('mark_price') or 0)
-                    coin     = sym.replace('USD', '')
+                    if sym.endswith('USDT'):
+                        coin = sym[:-4]
+                    elif sym.endswith('USD'):
+                        coin = sym[:-3]
+                    else:
+                        coin = sym
                     h        = delta_interval.get(sym, 8.0)
                     delta_map[coin] = {'rate': rate_pct, 'h': h, 'sym': sym, 'mark': mark}
 
-            binance_funding = fetch("https://fapi.binance.com/fapi/v1/premiumIndex")
+            binance_funding = fetch_coindcx_binance_funding()
             binance_map = {}
             coindcx_map = {}
             for b in binance_funding:
                 sym = b.get('symbol', '')
                 if sym.endswith('USDT'):
-                    coin     = sym.replace('USDT', '')
+                    coin     = sym[:-4]
                     rate_pct = float(b.get('lastFundingRate') or 0) * 100.0
                     mark     = float(b.get('markPrice') or 0)
                     binance_map[coin] = {'rate': rate_pct, 'sym': sym, 'mark': mark}
@@ -324,6 +386,21 @@ def bot_background_loop():
                     'h_coin':      h_coin,
                 })
 
+            if results:
+                last_valid_results = results
+                retry_count = 0
+            elif last_valid_results:
+                results = last_valid_results
+                retry_count += 1
+                if retry_count % 30 == 1:
+                    add_log("ℹ️ Network fallback active: Using cached funding rates while retrying live fetch...")
+            else:
+                retry_count += 1
+                if retry_count % 10 == 1:
+                    add_log("⚠️ Scanning exchange funding rates... Retrying...")
+                time.sleep(3)
+                continue
+
             results.sort(key=lambda x: x['raw_diff_num'], reverse=True)
             clean_top5 = []
             for r in results[:5]:
@@ -333,11 +410,6 @@ def bot_background_loop():
 
             bot_state["top5_coins"] = clean_top5
             bot_state["total_scanned_coins"] = len(results)
-
-            if not results:
-                add_log("⚠️ No common coins found. Retrying...")
-                time.sleep(5)
-                continue
 
             top   = results[0]
             coin  = top['coin']
