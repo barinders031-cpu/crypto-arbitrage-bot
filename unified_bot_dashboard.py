@@ -2,14 +2,14 @@
 Unified Multi-Engine Arbitrage Platform
 =========================================
 Engine 1: Cross-Exchange Perpetual Funding Rate Arbitrage (Delta Exchange India vs CoinDCX / Binance)
-Engine 2: Single-Exchange Triangular Arbitrage (3-Pair Loops: Binance vs CoinDCX with L2 Depth Walk & 1% Indian TDS Metrics)
+Engine 2: Binance Dynamic All-BTC-Coins Triangular Arbitrage Engine ($10 Paper Trading Wallet & Live Telegram Feed)
 
 Features:
 1. Double-Section Web Dashboard on http://localhost:5050 (Scroll down to view Triangular Arbitrage).
-2. Real-time L2 Order Book Depth Walk (Top 10 Levels) for VWAP Slippage Calculation.
-3. Full Telegram Instant Trade Alerts for both Cross-Exchange & Triangular Arbitrage opportunities.
-4. Render 24/7 Keep-Alive Self-Ping Module.
-5. 100% Paper Trading & Live Data Feed Simulation Engine.
+2. Dynamic Discovery of ALL 100+ BTC Trading Pairs listed on Binance (ETH, SOL, XRP, BNB, ADA, DOGE, AVAX, LINK, DOT, LTC, etc.).
+3. Real-time L2 Order Book Depth Walk (Top 10 Levels) for VWAP Slippage Calculation.
+4. $10 Virtual Paper Balance with Real-time PnL tracking & Telegram Alerts.
+5. Render 24/7 Keep-Alive Self-Ping Module.
 """
 
 import http.server
@@ -52,12 +52,13 @@ bot_state = {
     "top5_coins": [],
     "telegram_status": "Not Configured",
     
-    # Engine 2: Triangular Arbitrage
-    "triangular_status": "L2 DEPTH SCANNER ACTIVE",
+    # Engine 2: Binance All-BTC Pairs Triangular Arbitrage
+    "triangular_status": "BINANCE L2 DEPTH SCANNER ACTIVE",
+    "triangular_paper_balance": 10.0,  # $10 Paper Capital
     "triangular_scanned_count": 0,
     "triangular_last_scan": "-",
     "triangular_top_loop": "-",
-    "triangular_top_exchange": "-",
+    "triangular_top_exchange": "BINANCE",
     "triangular_top_net_pnl": "0.0000%",
     "triangular_top5": [],
     "triangular_total_trades": 0,
@@ -413,19 +414,8 @@ def bot_background_loop():
 
 
 # ==============================================================================
-# ENGINE 2: SINGLE-EXCHANGE TRIANGULAR ARBITRAGE SCANNER (BINANCE VS COINDCX)
+# ENGINE 2: BINANCE EXCLUSIVE DYNAMIC ALL-BTC-COINS TRIANGULAR ARBITRAGE
 # ==============================================================================
-TRIANGULAR_CANDIDATE_LOOPS = [
-    {"a": "ETH", "b": "BTC",  "label": "USDT → ETH → BTC → USDT"},
-    {"a": "SOL", "b": "BTC",  "label": "USDT → SOL → BTC → USDT"},
-    {"a": "XRP", "b": "BTC",  "label": "USDT → XRP → BTC → USDT"},
-    {"a": "BNB", "b": "BTC",  "label": "USDT → BNB → BTC → USDT"},
-    {"a": "ADA", "b": "BTC",  "label": "USDT → ADA → BTC → USDT"},
-    {"a": "SOL", "b": "ETH",  "label": "USDT → SOL → ETH → USDT"},
-    {"a": "LINK", "b": "BTC", "label": "USDT → LINK → BTC → USDT"},
-    {"a": "AVAX", "b": "BTC", "label": "USDT → AVAX → BTC → USDT"},
-    {"a": "DOGE", "b": "BTC", "label": "USDT → DOGE → BTC → USDT"},
-]
 
 def simulate_orderbook_buy(asks, capital_usdt):
     remaining = capital_usdt
@@ -475,170 +465,215 @@ def simulate_orderbook_sell(bids, base_qty):
     slippage = max(0.0, ideal_quote - total_quote)
     return total_quote, vwap, slippage
 
-def evaluate_triangular_loop(exchange, loop_cfg, capital=100.0):
-    a = loop_cfg["a"]
-    b = loop_cfg["b"]
-    label = loop_cfg["label"]
+def discover_binance_btc_triangular_loops():
+    """Dynamically fetches all trading symbols from Binance and discovers all valid 3-pair loops involving BTC & USDT."""
+    try:
+        ex_info = fetch("https://api.binance.com/api/v3/exchangeInfo")
+        symbols = ex_info.get("symbols", [])
+        
+        all_trading_symbols = {s["symbol"] for s in symbols if s.get("status") == "TRADING"}
 
-    sym1 = f"{a}USDT"
-    sym2_1 = f"{a}{b}"
-    sym2_2 = f"{b}{a}"
-    sym3 = f"{b}USDT"
+        # Find all coins X that have both XBTC and XUSDT pairs on Binance
+        btc_coins = []
+        for s in symbols:
+            sym = s.get("symbol", "")
+            if sym.endswith("BTC") and s.get("status") == "TRADING":
+                coin = sym[:-3]  # Strip "BTC"
+                if coin != "USDT" and f"{coin}USDT" in all_trading_symbols:
+                    btc_coins.append(coin)
 
-    if exchange == "binance":
-        ob1 = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym1}&limit=10")
-        ob2_1 = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym2_1}&limit=10")
-        ob2_2 = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym2_2}&limit=10")
-        ob3 = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym3}&limit=10")
-        taker_fee = 0.0010
-        is_tds = False
-    else:
-        # CoinDCX
-        ob1_raw = fetch(f"https://public.coindcx.com/market_data/orderbook?pair={sym1}")
-        ob2_1_raw = fetch(f"https://public.coindcx.com/market_data/orderbook?pair={sym2_1}")
-        ob2_2_raw = fetch(f"https://public.coindcx.com/market_data/orderbook?pair={sym2_2}")
-        ob3_raw = fetch(f"https://public.coindcx.com/market_data/orderbook?pair={sym3}")
+        return sorted(list(set(btc_coins)))
+    except Exception as e:
+        add_triangular_log(f"⚠️ Error discovering Binance BTC pairs: {e}")
+        return ["ETH", "SOL", "XRP", "BNB", "ADA", "DOGE", "AVAX", "LINK", "DOT", "LTC", "MATIC", "NEAR", "SHIB"]
 
-        def parse_cdcx(raw):
-            bids = [[p, q] for p, q in raw.get('bids', {}).items()] if isinstance(raw.get('bids'), dict) else raw.get('bids', [])
-            asks = [[p, q] for p, q in raw.get('asks', {}).items()] if isinstance(raw.get('asks'), dict) else raw.get('asks', [])
-            return {"bids": sorted(bids, key=lambda x: float(x[0]), reverse=True), "asks": sorted(asks, key=lambda x: float(x[0]))}
+def evaluate_binance_triangular_loop(coin, capital_usdt=10.0):
+    """
+    Evaluates both Forward and Reverse Triangular Loops on Binance for a given coin X (e.g. ETH, SOL, XRP):
+      Forward:  USDT -> BUY XUSDT -> SELL XBTC for BTC -> SELL BTCUSDT for USDT
+      Reverse:  USDT -> BUY BTCUSDT -> BUY XBTC with BTC -> SELL XUSDT for USDT
+    """
+    sym_xusdt = f"{coin}USDT"
+    sym_xbtc  = f"{coin}BTC"
+    sym_btcusdt = "BTCUSDT"
 
-        ob1 = parse_cdcx(ob1_raw)
-        ob2_1 = parse_cdcx(ob2_1_raw)
-        ob2_2 = parse_cdcx(ob2_2_raw)
-        ob3 = parse_cdcx(ob3_raw)
-        taker_fee = 0.0020
-        is_tds = True
+    # Fetch L2 Depth for all 3 pairs
+    ob_xusdt = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym_xusdt}&limit=10")
+    ob_xbtc  = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym_xbtc}&limit=10")
+    ob_btcusdt = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym_btcusdt}&limit=10")
 
-    if not ob1.get("asks") or not ob3.get("bids"):
+    if not ob_xusdt.get("asks") or not ob_xbtc.get("bids") or not ob_btcusdt.get("bids"):
         return None
 
-    # Step 1: BUY Asset A
-    qty_a, price1, slip1 = simulate_orderbook_buy(ob1["asks"], capital)
-    if qty_a == 0: return None
-    fee1 = capital * taker_fee
-    qty_a_net = qty_a * (1.0 - taker_fee)
+    taker_fee = 0.0010  # 0.10% Binance default taker fee
 
-    # Step 2: Trade A for B
-    if ob2_1.get("bids"):
-        qty_b, price2, slip2 = simulate_orderbook_sell(ob2_1["bids"], qty_a_net)
-        step2_label = f"SELL {a} on {sym2_1}"
-    elif ob2_2.get("asks"):
-        qty_b, price2, slip2 = simulate_orderbook_buy(ob2_2["asks"], qty_a_net)
-        step2_label = f"BUY {b} on {sym2_2}"
-    else:
-        return None
+    # ── OPTION A: FORWARD LOOP (USDT -> COIN -> BTC -> USDT) ──
+    # Step 1: BUY COIN on XUSDT
+    qty_x, p1_fwd, slip1_fwd = simulate_orderbook_buy(ob_xusdt["asks"], capital_usdt)
+    if qty_x == 0: return None
+    fee1_fwd = capital_usdt * taker_fee
+    qty_x_net = qty_x * (1.0 - taker_fee)
 
-    if qty_b == 0: return None
-    fee2 = (qty_b * float(ob3["bids"][0][0])) * taker_fee
-    qty_b_net = qty_b * (1.0 - taker_fee)
+    # Step 2: SELL COIN for BTC on XBTC
+    qty_btc, p2_fwd, slip2_fwd = simulate_orderbook_sell(ob_xbtc["bids"], qty_x_net)
+    if qty_btc == 0: return None
+    btc_mark_price = float(ob_btcusdt["bids"][0][0])
+    fee2_fwd = (qty_btc * btc_mark_price) * taker_fee
+    qty_btc_net = qty_btc * (1.0 - taker_fee)
 
-    # Step 3: SELL B for USDT
-    final_usdt, price3, slip3 = simulate_orderbook_sell(ob3["bids"], qty_b_net)
-    if final_usdt == 0: return None
-    fee3 = final_usdt * taker_fee
-    final_net_usdt = final_usdt * (1.0 - taker_fee)
+    # Step 3: SELL BTC for USDT on BTCUSDT
+    final_usdt_fwd, p3_fwd, slip3_fwd = simulate_orderbook_sell(ob_btcusdt["bids"], qty_btc_net)
+    if final_usdt_fwd == 0: return None
+    fee3_fwd = final_usdt_fwd * taker_fee
+    final_net_usdt_fwd = final_usdt_fwd * (1.0 - taker_fee)
 
-    total_fees = fee1 + fee2 + fee3
-    total_slip = slip1 + slip2 + slip3
-    gross_profit = final_usdt - capital
-    gross_pct = (gross_profit / capital) * 100.0
+    total_fees_fwd = fee1_fwd + fee2_fwd + fee3_fwd
+    total_slip_fwd = slip1_fwd + slip2_fwd + slip3_fwd
+    net_pnl_usd_fwd = final_net_usdt_fwd - capital_usdt
+    net_pnl_pct_fwd = (net_pnl_usd_fwd / capital_usdt) * 100.0
 
-    pre_tds_net = final_net_usdt - capital
-    pre_tds_pct = (pre_tds_net / capital) * 100.0
-
-    tds_val = (capital * 0.01) + (final_usdt * 0.01) if is_tds else 0.0
-    post_tds_net = pre_tds_net - tds_val
-    post_tds_pct = (post_tds_net / capital) * 100.0
-
-    return {
-        "exchange": exchange,
-        "label": label,
-        "capital": capital,
-        "step1": f"BUY {a} @ ${price1:.4f}",
-        "step2": f"{step2_label} @ {price2:.6f}",
-        "step3": f"SELL {b} @ ${price3:.4f}",
-        "final_usdt": final_net_usdt,
-        "total_fees": total_fees,
-        "total_slip": total_slip,
-        "gross_pct": f"{gross_pct:+.3f}%",
-        "pre_tds_pct_num": pre_tds_pct,
-        "pre_tds_pct": f"{pre_tds_pct:+.3f}%",
-        "post_tds_pct_num": post_tds_pct,
-        "post_tds_pct": f"{post_tds_pct:+.3f}%",
-        "is_tds": is_tds,
-        "tds_val": tds_val
+    res_fwd = {
+        "loop_type": "FORWARD",
+        "coin": coin,
+        "label": f"USDT → {coin} → BTC → USDT",
+        "exchange": "BINANCE",
+        "capital": capital_usdt,
+        "step1": f"BUY {coin} @ ${p1_fwd:.4f}",
+        "step2": f"SELL {coin} on {sym_xbtc} @ {p2_fwd:.8f}",
+        "step3": f"SELL BTC @ ${p3_fwd:.2f}",
+        "final_usdt": final_net_usdt_fwd,
+        "total_fees": total_fees_fwd,
+        "total_slip": total_slip_fwd,
+        "net_pnl_usd": net_pnl_usd_fwd,
+        "net_pnl_pct_num": net_pnl_pct_fwd,
+        "net_pnl_pct": f"{net_pnl_pct_fwd:+.3f}%"
     }
+
+    # ── OPTION B: REVERSE LOOP (USDT -> BTC -> COIN -> USDT) ──
+    # Step 1: BUY BTC on BTCUSDT
+    qty_btc_rev, p1_rev, slip1_rev = simulate_orderbook_buy(ob_btcusdt["asks"], capital_usdt)
+    if qty_btc_rev == 0: return None
+    fee1_rev = capital_usdt * taker_fee
+    qty_btc_net_rev = qty_btc_rev * (1.0 - taker_fee)
+
+    # Step 2: BUY COIN using BTC on XBTC
+    qty_x_rev, p2_rev, slip2_rev = simulate_orderbook_buy(ob_xbtc["asks"], qty_btc_net_rev)
+    if qty_x_rev == 0: return None
+    fee2_rev = (qty_btc_net_rev * btc_mark_price) * taker_fee
+    qty_x_net_rev = qty_x_rev * (1.0 - taker_fee)
+
+    # Step 3: SELL COIN for USDT on XUSDT
+    final_usdt_rev, p3_rev, slip3_rev = simulate_orderbook_sell(ob_xusdt["bids"], qty_x_net_rev)
+    if final_usdt_rev == 0: return None
+    fee3_rev = final_usdt_rev * taker_fee
+    final_net_usdt_rev = final_usdt_rev * (1.0 - taker_fee)
+
+    total_fees_rev = fee1_rev + fee2_rev + fee3_rev
+    total_slip_rev = slip1_rev + slip2_rev + slip3_rev
+    net_pnl_usd_rev = final_net_usdt_rev - capital_usdt
+    net_pnl_pct_rev = (net_pnl_usd_rev / capital_usdt) * 100.0
+
+    res_rev = {
+        "loop_type": "REVERSE",
+        "coin": coin,
+        "label": f"USDT → BTC → {coin} → USDT",
+        "exchange": "BINANCE",
+        "capital": capital_usdt,
+        "step1": f"BUY BTC @ ${p1_rev:.2f}",
+        "step2": f"BUY {coin} on {sym_xbtc} @ {p2_rev:.8f}",
+        "step3": f"SELL {coin} @ ${p3_rev:.4f}",
+        "final_usdt": final_net_usdt_rev,
+        "total_fees": total_fees_rev,
+        "total_slip": total_slip_rev,
+        "net_pnl_usd": net_pnl_usd_rev,
+        "net_pnl_pct_num": net_pnl_pct_rev,
+        "net_pnl_pct": f"{net_pnl_pct_rev:+.3f}%"
+    }
+
+    # Return the best loop option (Forward or Reverse)
+    return res_fwd if res_fwd["net_pnl_pct_num"] >= res_rev["net_pnl_pct_num"] else res_rev
+
 
 def triangular_background_loop():
     global triangular_history, bot_state
-    add_triangular_log("Triangular Arbitrage Engine Active (Binance vs CoinDCX 3-Pair Scans).")
+    add_triangular_log("Binance Dynamic All-BTC Pairs Engine Active ($10 Virtual Wallet).")
     
+    # Discover all Binance BTC trading coins dynamically on startup
+    btc_coins = discover_binance_btc_triangular_loops()
+    add_triangular_log(f"🌐 Dynamic Discovery Complete: Found {len(btc_coins)} Active BTC Trading Pairs on Binance!")
+
+    last_discovery_time = time.time()
+
     while True:
         try:
             now_utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
             now_ist = now_utc + datetime.timedelta(hours=5, minutes=30)
             now_str = now_ist.strftime("%Y-%m-%d %H:%M:%S IST")
 
+            # Refresh list of active BTC coins every 30 minutes
+            if time.time() - last_discovery_time > 1800:
+                btc_coins = discover_binance_btc_triangular_loops()
+                last_discovery_time = time.time()
+
+            capital = bot_state["triangular_paper_balance"]
             all_results = []
-            for cfg in TRIANGULAR_CANDIDATE_LOOPS:
-                res_b = evaluate_triangular_loop("binance", cfg)
-                res_c = evaluate_triangular_loop("coindcx", cfg)
 
-                candidates = [r for r in [res_b, res_c] if r is not None]
-                if not candidates:
-                    continue
-                candidates.sort(key=lambda x: x["pre_tds_pct_num"], reverse=True)
-                all_results.append(candidates[0])
+            # Scan all BTC coins on Binance
+            for coin in btc_coins:
+                res = evaluate_binance_triangular_loop(coin, capital_usdt=capital)
+                if res:
+                    all_results.append(res)
 
-            all_results.sort(key=lambda x: x["pre_tds_pct_num"], reverse=True)
+            all_results.sort(key=lambda x: x["net_pnl_pct_num"], reverse=True)
 
-            bot_state["triangular_scanned_count"] = len(all_results)
+            bot_state["triangular_scanned_count"] = len(btc_coins)
             bot_state["triangular_last_scan"] = now_str
             bot_state["triangular_top5"] = all_results[:5]
 
             if all_results:
                 top = all_results[0]
                 bot_state["triangular_top_loop"] = top["label"]
-                bot_state["triangular_top_exchange"] = top["exchange"].upper()
-                bot_state["triangular_top_net_pnl"] = top["pre_tds_pct"]
+                bot_state["triangular_top_exchange"] = "BINANCE"
+                bot_state["triangular_top_net_pnl"] = top["net_pnl_pct"]
 
-                # Auto execution gate if Pre-TDS Net PnL >= +0.15%
-                if top["pre_tds_pct_num"] >= 0.15:
-                    bot_state["triangular_total_trades"] += 1
-                    net_cash = top["pre_tds_pct_num"]
-                    bot_state["triangular_net_pnl_usd"] += net_cash
+                # Auto execution gate if Net PnL % >= +0.10%
+                if top["net_pnl_pct_num"] >= 0.10:
+                    net_usd = top["net_pnl_usd"]
+                    bot_state["triangular_paper_balance"] += net_usd
+                    bot_state["triangular_net_pnl_usd"]    += net_usd
+                    bot_state["triangular_total_trades"]    += 1
 
                     trade_entry = {
                         "id": bot_state["triangular_total_trades"],
                         "timestamp": now_str,
                         "loop": top["label"],
-                        "exchange": top["exchange"].upper(),
+                        "exchange": "BINANCE",
                         "fees": f"-${top['total_fees']:.4f}",
                         "slippage": f"-${top['total_slip']:.4f}",
-                        "pre_tds_pnl": f"{top['pre_tds_pct']}",
-                        "post_tds_pnl": f"{top['post_tds_pct']}"
+                        "net_pnl": f"{top['net_pnl_pct']} (${net_usd:+.4f})",
+                        "balance": f"${bot_state['triangular_paper_balance']:.4f}"
                     }
                     triangular_history.insert(0, trade_entry)
 
-                    add_triangular_log(f"🔺 [TRIANGULAR EXECUTION] {top['label']} on {top['exchange'].upper()} | Pre-TDS Net: {top['pre_tds_pct']} | Fees: -${top['total_fees']:.4f}")
+                    add_triangular_log(f"🔺 [BINANCE TRIANGULAR EXECUTION] {top['label']} | NET: {top['net_pnl_pct']} (${net_usd:+.4f}) | New Balance: ${bot_state['triangular_paper_balance']:.4f}")
                     
                     tg_msg = (
-                        f"🔺 *TRIANGULAR ARBITRAGE LOOP DETECTED* 🚀\n\n"
+                        f"🔺 *BINANCE REAL-TIME TRIANGULAR ARBITRAGE COMPLETE* 🚀\n\n"
                         f"🔄 *Loop:* `{top['label']}`\n"
-                        f"🏛️ *Exchange:* `{top['exchange'].upper()}`\n"
-                        f"💵 *Pre-TDS Net Profit:* `{top['pre_tds_pct']}`\n"
+                        f"🏛️ *Exchange:* `BINANCE SPOT`\n"
+                        f"💵 *Trade Capital:* `${capital:.2f} USDT`\n"
                         f"🏷️ *Total Fees Cut:* `-${top['total_fees']:.4f} USD`\n"
-                        f"⚡ *Slippage Impact:* `-${top['total_slip']:.4f} USD`\n"
-                        f"🇮🇳 *Post-TDS Net Profit:* `{top['post_tds_pct']}`"
+                        f"⚡ *Slippage Impact:* `-${top['total_slip']:.4f} USD`\n\n"
+                        f"📈 *NET CASH PROFIT:* `{top['net_pnl_pct']} (${net_usd:+.4f} USD)`\n"
+                        f"💰 *UPDATED VIRTUAL BALANCE:* `${bot_state['triangular_paper_balance']:.4f} USD`\n"
+                        f"📊 *Total Net PnL:* `${bot_state['triangular_net_pnl_usd']:+.4f} USD`"
                     )
                     send_telegram_alert(tg_msg)
 
         except Exception as e:
-            add_triangular_log(f"⚠️ Error in triangular loop: {e}")
+            add_triangular_log(f"⚠️ Error in Binance triangular loop: {e}")
 
-        time.sleep(4)
+        time.sleep(3)
 
 def self_ping_loop():
     time.sleep(30)
@@ -911,7 +946,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
         <div class="header">
             <div class="header-title">
                 <h1>MULTI-ENGINE ARBITRAGE TERMINAL</h1>
-                <p>Cross-Exchange Funding Rates & Single-Exchange Triangular Arbitrage (Real-Time Live Feed)</p>
+                <p>Cross-Exchange Funding Rates & Binance Dynamic All-BTC Pairs Triangular Arbitrage</p>
             </div>
 
             <div class="telegram-widget">
@@ -1013,39 +1048,39 @@ HTML_DASHBOARD = """<!DOCTYPE html>
         </div>
 
         <!-- ============================================================================== -->
-        <!-- DIVIDER & SECTION 2: TRIANGULAR ARBITRAGE MONITOR (SCROLL DOWN) -->
+        <!-- DIVIDER & SECTION 2: BINANCE ALL-BTC-COINS TRIANGULAR ARBITRAGE (SCROLL DOWN) -->
         <!-- ============================================================================== -->
         <hr class="section-divider">
 
         <div class="section-header">
             <div class="section-title">
-                🔺 SECTION 2: SINGLE-EXCHANGE TRIANGULAR ARBITRAGE MONITOR
-                <span class="engine-tag tag-triangular">BINANCE VS COINDCX (3-PAIR LOOPS)</span>
+                🔺 SECTION 2: BINANCE DYNAMIC ALL-BTC TRIANGULAR ARBITRAGE
+                <span class="engine-tag tag-triangular">BINANCE EXCLUSIVE (ALL BTC PAIRS)</span>
             </div>
             <div style="font-size: 12px; color: var(--text-muted);" id="tri-scan-time">Last Scan: Just Now</div>
         </div>
 
         <div class="grid-4">
             <div class="card">
-                <div class="card-label">Triangular Loops Scanned</div>
+                <div class="card-label">Virtual Paper Balance</div>
+                <div class="card-val text-green" id="tri-val-balance">$10.0000</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Net Triangular PnL (USD)</div>
+                <div class="card-val text-green" id="tri-val-pnl-usd">+$0.0000</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Active BTC Pairs Scanned</div>
                 <div class="card-val text-purple" id="tri-val-count">0 Pairs</div>
             </div>
             <div class="card">
-                <div class="card-label">Top Triangular Loop</div>
-                <div class="card-val text-cyan" id="tri-val-loop" style="font-size: 16px; margin-top: 5px;">-</div>
-            </div>
-            <div class="card">
-                <div class="card-label">Optimal Exchange Selected</div>
-                <div class="card-val text-yellow" id="tri-val-ex">-</div>
-            </div>
-            <div class="card">
-                <div class="card-label">Top Pre-TDS Net Profit %</div>
-                <div class="card-val text-green" id="tri-val-pnl">0.0000%</div>
+                <div class="card-label">Top Scanned Loop</div>
+                <div class="card-val text-cyan" id="tri-val-loop" style="font-size: 15px; margin-top: 5px;">-</div>
             </div>
         </div>
 
         <div class="section-header">
-            <div class="section-title" style="font-size: 14px;">Live Scanned 3-Pair Triangular Loops</div>
+            <div class="section-title" style="font-size: 14px;">Top Scanned Triangular Loops (Binance Spot L2 Order Book)</div>
             <span style="font-size: 11px; color: var(--text-muted);">Order Book Depth Walk (Top 10 Levels) for VWAP Slippage</span>
         </div>
 
@@ -1055,17 +1090,16 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                     <tr>
                         <th>#</th>
                         <th>Triangular Loop</th>
-                        <th>Selected Exchange</th>
-                        <th>Leg 1 (Buy A)</th>
-                        <th>Leg 2 (Trade B)</th>
-                        <th>Leg 3 (Sell USDT)</th>
+                        <th>Direction</th>
+                        <th>Step 1</th>
+                        <th>Step 2</th>
+                        <th>Step 3</th>
                         <th>Fees & Slippage</th>
-                        <th>Pre-TDS Net %</th>
-                        <th>Post-TDS Net %</th>
+                        <th>Net Profit %</th>
                     </tr>
                 </thead>
                 <tbody id="triangular-rows">
-                    <tr><td colspan="9" style="text-align: center; color: var(--text-muted);">Scanning L2 order book depth for triangular loops...</td></tr>
+                    <tr><td colspan="8" style="text-align: center; color: var(--text-muted);">Scanning all active Binance BTC trading pairs...</td></tr>
                 </tbody>
             </table>
         </div>
@@ -1076,7 +1110,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                     <div class="section-title" style="font-size: 14px;">Triangular Scanner Logs</div>
                 </div>
                 <div class="log-box" id="triangular-logs-container">
-                    <div class="log-entry">Initializing Triangular Engine...</div>
+                    <div class="log-entry">Initializing Binance All-BTC Scanner Engine...</div>
                 </div>
             </div>
 
@@ -1091,14 +1125,13 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                                 <th>#</th>
                                 <th>Time</th>
                                 <th>Loop</th>
-                                <th>Exchange</th>
                                 <th>Fees</th>
-                                <th>Pre-TDS</th>
-                                <th>Post-TDS</th>
+                                <th>Net PnL</th>
+                                <th>Updated Balance</th>
                             </tr>
                         </thead>
                         <tbody id="triangular-history-rows">
-                            <tr><td colspan="7" style="text-align: center; color: var(--text-muted);">Waiting for profitable triangular loop (&ge; +0.15% Net)...</td></tr>
+                            <tr><td colspan="6" style="text-align: center; color: var(--text-muted);">Waiting for profitable Binance triangular loop (&ge; +0.10% Net)...</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -1189,17 +1222,19 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                     `).join('');
                 }
 
-                // --- UPDATE ENGINE 2: TRIANGULAR ARBITRAGE ---
+                // --- UPDATE ENGINE 2: BINANCE ALL-BTC TRIANGULAR ARBITRAGE ---
                 document.getElementById('tri-scan-time').innerText = 'Last Scan: ' + (data.state.triangular_last_scan || 'Just Now');
-                document.getElementById('tri-val-count').innerText = (data.state.triangular_scanned_count || 0) + ' Pairs';
-                document.getElementById('tri-val-loop').innerText = data.state.triangular_top_loop || '-';
-                document.getElementById('tri-val-ex').innerText = data.state.triangular_top_exchange || '-';
+                document.getElementById('tri-val-balance').innerText = '$' + (data.state.triangular_paper_balance || 10.0).toFixed(4);
                 
-                const triPnlEl = document.getElementById('tri-val-pnl');
-                if (triPnlEl) {
-                    triPnlEl.innerText = data.state.triangular_top_net_pnl || '0.0000%';
-                    triPnlEl.className = (data.state.triangular_top_net_pnl || '').includes('-') ? 'card-val text-red' : 'card-val text-green';
+                const triPnlUsd = data.state.triangular_net_pnl_usd || 0.0;
+                const triPnlUsdEl = document.getElementById('tri-val-pnl-usd');
+                if (triPnlUsdEl) {
+                    triPnlUsdEl.innerText = (triPnlUsd >= 0 ? '+' : '') + '$' + triPnlUsd.toFixed(4);
+                    triPnlUsdEl.className = triPnlUsd >= 0 ? 'card-val text-green' : 'card-val text-red';
                 }
+
+                document.getElementById('tri-val-count').innerText = (data.state.triangular_scanned_count || 0) + ' BTC Pairs';
+                document.getElementById('tri-val-loop').innerText = data.state.triangular_top_loop || '-';
 
                 const triBody = document.getElementById('triangular-rows');
                 if (data.state.triangular_top5 && data.state.triangular_top5.length > 0) {
@@ -1207,13 +1242,12 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                         <tr>
                             <td><strong>${idx + 1}</strong></td>
                             <td><strong class="text-purple">${item.label}</strong></td>
-                            <td><span class="badge-ex">${item.exchange.toUpperCase()}</span></td>
+                            <td><span class="badge-ex">${item.loop_type}</span></td>
                             <td style="font-size:12px;">${item.step1}</td>
                             <td style="font-size:12px;">${item.step2}</td>
                             <td style="font-size:12px;">${item.step3}</td>
                             <td style="font-size:12px;"><span class="text-red">-$${item.total_fees.toFixed(4)}</span> | <span class="text-yellow">Slip -$${item.total_slip.toFixed(4)}</span></td>
-                            <td><strong class="${item.pre_tds_pct.includes('-') ? 'text-red' : 'text-green'}">${item.pre_tds_pct}</strong></td>
-                            <td><strong class="${item.post_tds_pct.includes('-') ? 'text-red' : 'text-green'}">${item.post_tds_pct}</strong> ${item.is_tds ? '<span style="font-size:10px; color:var(--accent-yellow);">(1% TDS)</span>' : ''}</td>
+                            <td><strong class="${item.net_pnl_pct.includes('-') ? 'text-red' : 'text-green'}">${item.net_pnl_pct}</strong></td>
                         </tr>
                     `).join('');
                 }
@@ -1231,10 +1265,9 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                             <td>${t.id}</td>
                             <td>${t.timestamp.split(' ')[1] || t.timestamp}</td>
                             <td><strong class="text-purple">${t.loop}</strong></td>
-                            <td><span class="badge-ex">${t.exchange}</span></td>
                             <td class="text-red">${t.fees}</td>
-                            <td class="text-green">${t.pre_tds_pnl}</td>
-                            <td class="text-green">${t.post_tds_pnl}</td>
+                            <td class="text-green">${t.net_pnl}</td>
+                            <td class="text-cyan">${t.balance}</td>
                         </tr>
                     `).join('');
                 }
