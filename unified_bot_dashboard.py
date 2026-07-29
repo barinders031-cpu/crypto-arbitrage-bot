@@ -469,23 +469,31 @@ def discover_binance_btc_triangular_loops():
     """Dynamically fetches all trading symbols from Binance and discovers all valid 3-pair loops involving BTC & USDT."""
     try:
         ex_info = fetch("https://api.binance.com/api/v3/exchangeInfo")
+        if not isinstance(ex_info, dict):
+            ex_info = {}
         symbols = ex_info.get("symbols", [])
+        if not isinstance(symbols, list):
+            symbols = []
         
-        all_trading_symbols = {s["symbol"] for s in symbols if s.get("status") == "TRADING"}
+        all_trading_symbols = {s.get("symbol") for s in symbols if isinstance(s, dict) and s.get("status") == "TRADING"}
 
         # Find all coins X that have both XBTC and XUSDT pairs on Binance
         btc_coins = []
         for s in symbols:
+            if not isinstance(s, dict):
+                continue
             sym = s.get("symbol", "")
             if sym.endswith("BTC") and s.get("status") == "TRADING":
                 coin = sym[:-3]  # Strip "BTC"
                 if coin != "USDT" and f"{coin}USDT" in all_trading_symbols:
                     btc_coins.append(coin)
 
-        return sorted(list(set(btc_coins)))
+        if btc_coins:
+            return sorted(list(set(btc_coins)))
     except Exception as e:
         add_triangular_log(f"⚠️ Error discovering Binance BTC pairs: {e}")
-        return ["ETH", "SOL", "XRP", "BNB", "ADA", "DOGE", "AVAX", "LINK", "DOT", "LTC", "MATIC", "NEAR", "SHIB"]
+
+    return ["ETH", "SOL", "XRP", "BNB", "ADA", "DOGE", "AVAX", "LINK", "DOT", "LTC", "MATIC", "NEAR", "SHIB"]
 
 def evaluate_binance_triangular_loop(coin, capital_usdt=10.0):
     """
@@ -493,105 +501,117 @@ def evaluate_binance_triangular_loop(coin, capital_usdt=10.0):
       Forward:  USDT -> BUY XUSDT -> SELL XBTC for BTC -> SELL BTCUSDT for USDT
       Reverse:  USDT -> BUY BTCUSDT -> BUY XBTC with BTC -> SELL XUSDT for USDT
     """
-    sym_xusdt = f"{coin}USDT"
-    sym_xbtc  = f"{coin}BTC"
-    sym_btcusdt = "BTCUSDT"
+    try:
+        sym_xusdt = f"{coin}USDT"
+        sym_xbtc  = f"{coin}BTC"
+        sym_btcusdt = "BTCUSDT"
 
-    # Fetch L2 Depth for all 3 pairs
-    ob_xusdt = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym_xusdt}&limit=10")
-    ob_xbtc  = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym_xbtc}&limit=10")
-    ob_btcusdt = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym_btcusdt}&limit=10")
+        # Fetch L2 Depth for all 3 pairs
+        ob_xusdt = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym_xusdt}&limit=10")
+        ob_xbtc  = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym_xbtc}&limit=10")
+        ob_btcusdt = fetch(f"https://api.binance.com/api/v3/depth?symbol={sym_btcusdt}&limit=10")
 
-    if not ob_xusdt.get("asks") or not ob_xbtc.get("bids") or not ob_btcusdt.get("bids"):
+        if not isinstance(ob_xusdt, dict) or not isinstance(ob_xbtc, dict) or not isinstance(ob_btcusdt, dict):
+            return None
+
+        asks_xusdt = ob_xusdt.get("asks", [])
+        bids_xbtc   = ob_xbtc.get("bids", [])
+        asks_xbtc   = ob_xbtc.get("asks", [])
+        bids_btcusdt= ob_btcusdt.get("bids", [])
+        asks_btcusdt= ob_btcusdt.get("asks", [])
+
+        if not asks_xusdt or not bids_xbtc or not bids_btcusdt or not asks_btcusdt or not asks_xbtc:
+            return None
+
+        taker_fee = 0.0010  # 0.10% Binance default taker fee
+
+        # ── OPTION A: FORWARD LOOP (USDT -> COIN -> BTC -> USDT) ──
+        # Step 1: BUY COIN on XUSDT
+        qty_x, p1_fwd, slip1_fwd = simulate_orderbook_buy(asks_xusdt, capital_usdt)
+        if qty_x == 0: return None
+        fee1_fwd = capital_usdt * taker_fee
+        qty_x_net = qty_x * (1.0 - taker_fee)
+
+        # Step 2: SELL COIN for BTC on XBTC
+        qty_btc, p2_fwd, slip2_fwd = simulate_orderbook_sell(bids_xbtc, qty_x_net)
+        if qty_btc == 0: return None
+        btc_mark_price = float(bids_btcusdt[0][0])
+        fee2_fwd = (qty_btc * btc_mark_price) * taker_fee
+        qty_btc_net = qty_btc * (1.0 - taker_fee)
+
+        # Step 3: SELL BTC for USDT on BTCUSDT
+        final_usdt_fwd, p3_fwd, slip3_fwd = simulate_orderbook_sell(bids_btcusdt, qty_btc_net)
+        if final_usdt_fwd == 0: return None
+        fee3_fwd = final_usdt_fwd * taker_fee
+        final_net_usdt_fwd = final_usdt_fwd * (1.0 - taker_fee)
+
+        total_fees_fwd = fee1_fwd + fee2_fwd + fee3_fwd
+        total_slip_fwd = slip1_fwd + slip2_fwd + slip3_fwd
+        net_pnl_usd_fwd = final_net_usdt_fwd - capital_usdt
+        net_pnl_pct_fwd = (net_pnl_usd_fwd / capital_usdt) * 100.0
+
+        res_fwd = {
+            "loop_type": "FORWARD",
+            "coin": coin,
+            "label": f"USDT → {coin} → BTC → USDT",
+            "exchange": "BINANCE",
+            "capital": capital_usdt,
+            "step1": f"BUY {coin} @ ${p1_fwd:.4f}",
+            "step2": f"SELL {coin} on {sym_xbtc} @ {p2_fwd:.8f}",
+            "step3": f"SELL BTC @ ${p3_fwd:.2f}",
+            "final_usdt": final_net_usdt_fwd,
+            "total_fees": total_fees_fwd,
+            "total_slip": total_slip_fwd,
+            "net_pnl_usd": net_pnl_usd_fwd,
+            "net_pnl_pct_num": net_pnl_pct_fwd,
+            "net_pnl_pct": f"{net_pnl_pct_fwd:+.3f}%"
+        }
+
+        # ── OPTION B: REVERSE LOOP (USDT -> BTC -> COIN -> USDT) ──
+        # Step 1: BUY BTC on BTCUSDT
+        qty_btc_rev, p1_rev, slip1_rev = simulate_orderbook_buy(asks_btcusdt, capital_usdt)
+        if qty_btc_rev == 0: return None
+        fee1_rev = capital_usdt * taker_fee
+        qty_btc_net_rev = qty_btc_rev * (1.0 - taker_fee)
+
+        # Step 2: BUY COIN using BTC on XBTC
+        qty_x_rev, p2_rev, slip2_rev = simulate_orderbook_buy(asks_xbtc, qty_btc_net_rev)
+        if qty_x_rev == 0: return None
+        fee2_rev = (qty_btc_net_rev * btc_mark_price) * taker_fee
+        qty_x_net_rev = qty_x_rev * (1.0 - taker_fee)
+
+        # Step 3: SELL COIN for USDT on XUSDT
+        final_usdt_rev, p3_rev, slip3_rev = simulate_orderbook_sell(ob_xusdt.get("bids", []), qty_x_net_rev)
+        if final_usdt_rev == 0: return None
+        fee3_rev = final_usdt_rev * taker_fee
+        final_net_usdt_rev = final_usdt_rev * (1.0 - taker_fee)
+
+        total_fees_rev = fee1_rev + fee2_rev + fee3_rev
+        total_slip_rev = slip1_rev + slip2_rev + slip3_rev
+        net_pnl_usd_rev = final_net_usdt_rev - capital_usdt
+        net_pnl_pct_rev = (net_pnl_usd_rev / capital_usdt) * 100.0
+
+        res_rev = {
+            "loop_type": "REVERSE",
+            "coin": coin,
+            "label": f"USDT → BTC → {coin} → USDT",
+            "exchange": "BINANCE",
+            "capital": capital_usdt,
+            "step1": f"BUY BTC @ ${p1_rev:.2f}",
+            "step2": f"BUY {coin} on {sym_xbtc} @ {p2_rev:.8f}",
+            "step3": f"SELL {coin} @ ${p3_rev:.4f}",
+            "final_usdt": final_net_usdt_rev,
+            "total_fees": total_fees_rev,
+            "total_slip": total_slip_rev,
+            "net_pnl_usd": net_pnl_usd_rev,
+            "net_pnl_pct_num": net_pnl_pct_rev,
+            "net_pnl_pct": f"{net_pnl_pct_rev:+.3f}%"
+        }
+
+        # Return the best loop option (Forward or Reverse)
+        return res_fwd if res_fwd["net_pnl_pct_num"] >= res_rev["net_pnl_pct_num"] else res_rev
+    except Exception:
         return None
-
-    taker_fee = 0.0010  # 0.10% Binance default taker fee
-
-    # ── OPTION A: FORWARD LOOP (USDT -> COIN -> BTC -> USDT) ──
-    # Step 1: BUY COIN on XUSDT
-    qty_x, p1_fwd, slip1_fwd = simulate_orderbook_buy(ob_xusdt["asks"], capital_usdt)
-    if qty_x == 0: return None
-    fee1_fwd = capital_usdt * taker_fee
-    qty_x_net = qty_x * (1.0 - taker_fee)
-
-    # Step 2: SELL COIN for BTC on XBTC
-    qty_btc, p2_fwd, slip2_fwd = simulate_orderbook_sell(ob_xbtc["bids"], qty_x_net)
-    if qty_btc == 0: return None
-    btc_mark_price = float(ob_btcusdt["bids"][0][0])
-    fee2_fwd = (qty_btc * btc_mark_price) * taker_fee
-    qty_btc_net = qty_btc * (1.0 - taker_fee)
-
-    # Step 3: SELL BTC for USDT on BTCUSDT
-    final_usdt_fwd, p3_fwd, slip3_fwd = simulate_orderbook_sell(ob_btcusdt["bids"], qty_btc_net)
-    if final_usdt_fwd == 0: return None
-    fee3_fwd = final_usdt_fwd * taker_fee
-    final_net_usdt_fwd = final_usdt_fwd * (1.0 - taker_fee)
-
-    total_fees_fwd = fee1_fwd + fee2_fwd + fee3_fwd
-    total_slip_fwd = slip1_fwd + slip2_fwd + slip3_fwd
-    net_pnl_usd_fwd = final_net_usdt_fwd - capital_usdt
-    net_pnl_pct_fwd = (net_pnl_usd_fwd / capital_usdt) * 100.0
-
-    res_fwd = {
-        "loop_type": "FORWARD",
-        "coin": coin,
-        "label": f"USDT → {coin} → BTC → USDT",
-        "exchange": "BINANCE",
-        "capital": capital_usdt,
-        "step1": f"BUY {coin} @ ${p1_fwd:.4f}",
-        "step2": f"SELL {coin} on {sym_xbtc} @ {p2_fwd:.8f}",
-        "step3": f"SELL BTC @ ${p3_fwd:.2f}",
-        "final_usdt": final_net_usdt_fwd,
-        "total_fees": total_fees_fwd,
-        "total_slip": total_slip_fwd,
-        "net_pnl_usd": net_pnl_usd_fwd,
-        "net_pnl_pct_num": net_pnl_pct_fwd,
-        "net_pnl_pct": f"{net_pnl_pct_fwd:+.3f}%"
-    }
-
-    # ── OPTION B: REVERSE LOOP (USDT -> BTC -> COIN -> USDT) ──
-    # Step 1: BUY BTC on BTCUSDT
-    qty_btc_rev, p1_rev, slip1_rev = simulate_orderbook_buy(ob_btcusdt["asks"], capital_usdt)
-    if qty_btc_rev == 0: return None
-    fee1_rev = capital_usdt * taker_fee
-    qty_btc_net_rev = qty_btc_rev * (1.0 - taker_fee)
-
-    # Step 2: BUY COIN using BTC on XBTC
-    qty_x_rev, p2_rev, slip2_rev = simulate_orderbook_buy(ob_xbtc["asks"], qty_btc_net_rev)
-    if qty_x_rev == 0: return None
-    fee2_rev = (qty_btc_net_rev * btc_mark_price) * taker_fee
-    qty_x_net_rev = qty_x_rev * (1.0 - taker_fee)
-
-    # Step 3: SELL COIN for USDT on XUSDT
-    final_usdt_rev, p3_rev, slip3_rev = simulate_orderbook_sell(ob_xusdt["bids"], qty_x_net_rev)
-    if final_usdt_rev == 0: return None
-    fee3_rev = final_usdt_rev * taker_fee
-    final_net_usdt_rev = final_usdt_rev * (1.0 - taker_fee)
-
-    total_fees_rev = fee1_rev + fee2_rev + fee3_rev
-    total_slip_rev = slip1_rev + slip2_rev + slip3_rev
-    net_pnl_usd_rev = final_net_usdt_rev - capital_usdt
-    net_pnl_pct_rev = (net_pnl_usd_rev / capital_usdt) * 100.0
-
-    res_rev = {
-        "loop_type": "REVERSE",
-        "coin": coin,
-        "label": f"USDT → BTC → {coin} → USDT",
-        "exchange": "BINANCE",
-        "capital": capital_usdt,
-        "step1": f"BUY BTC @ ${p1_rev:.2f}",
-        "step2": f"BUY {coin} on {sym_xbtc} @ {p2_rev:.8f}",
-        "step3": f"SELL {coin} @ ${p3_rev:.4f}",
-        "final_usdt": final_net_usdt_rev,
-        "total_fees": total_fees_rev,
-        "total_slip": total_slip_rev,
-        "net_pnl_usd": net_pnl_usd_rev,
-        "net_pnl_pct_num": net_pnl_pct_rev,
-        "net_pnl_pct": f"{net_pnl_pct_rev:+.3f}%"
-    }
-
-    # Return the best loop option (Forward or Reverse)
-    return res_fwd if res_fwd["net_pnl_pct_num"] >= res_rev["net_pnl_pct_num"] else res_rev
 
 
 def triangular_background_loop():
