@@ -403,8 +403,25 @@ def bot_background_loop():
 
         time.sleep(1)
 
-# Start background thread
+def self_ping_loop():
+    """Background thread to ping Render external URL every 4 minutes to prevent sleep mode 24/7."""
+    time.sleep(30)  # Wait 30s after server startup
+    while True:
+        external_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("SELF_PING_URL")
+        if external_url:
+            target_url = f"{external_url.rstrip('/')}/ping"
+            try:
+                req = urllib.request.Request(target_url, headers={'User-Agent': 'Mozilla/5.0 SelfPinger'})
+                with urllib.request.urlopen(req, timeout=10) as res:
+                    if res.status == 200:
+                        add_log("🟢 [24/7 KEEP-ALIVE] Render Self-Ping Successful (Server Awake).")
+            except Exception as e:
+                add_log(f"⚠️ [24/7 KEEP-ALIVE] Self-Ping check: {e}")
+        time.sleep(240)  # Ping every 4 minutes
+
+# Start background threads
 threading.Thread(target=bot_background_loop, daemon=True).start()
+threading.Thread(target=self_ping_loop, daemon=True).start()
 
 HTML_DASHBOARD = """<!DOCTYPE html>
 <html lang="en">
