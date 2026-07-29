@@ -38,13 +38,23 @@ bot_state = {
 }
 
 def get_telegram_config():
+    # 1. Try local config file
     if os.path.exists(CONFIG_FILE):
         try:
             with open(CONFIG_FILE, 'r') as f:
-                return json.load(f)
+                cfg = json.load(f)
+                if cfg.get("bot_token") and cfg.get("chat_id"):
+                    return cfg
         except Exception:
             pass
+    # 2. Fallback to Environment Variables (useful for Render / Cloud hosting)
+    env_token = os.getenv("TELEGRAM_BOT_TOKEN", "").strip()
+    env_chat_id = os.getenv("TELEGRAM_CHAT_ID", "").strip()
+    env_enabled = os.getenv("TELEGRAM_ENABLED", "true").lower() in ["true", "1", "yes"]
+    if env_token:
+        return {"bot_token": env_token, "chat_id": env_chat_id, "enabled": env_enabled}
     return {"bot_token": "", "chat_id": "", "enabled": False}
+
 
 def auto_detect_chat_id(bot_token):
     try:
@@ -122,9 +132,8 @@ def bot_background_loop():
     
     margin = 10.0        # $10 Margin per exchange
 
-    def next_funding_info(interval_hours, now):
+    def next_funding_info(interval_hours, now_utc):
         h = int(interval_hours)
-        now_utc = now - datetime.timedelta(hours=5, minutes=30)
         current_hour_utc = now_utc.hour
         next_settlement_hour_utc = ((current_hour_utc // h) + 1) * h
         if next_settlement_hour_utc >= 24:
@@ -145,9 +154,9 @@ def bot_background_loop():
 
     while True:
         try:
-            now = datetime.datetime.now()
-            now_utc = now - datetime.timedelta(hours=5, minutes=30)
-            now_str = now.strftime("%Y-%m-%d %H:%M:%S")
+            now_utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            now_ist = now_utc + datetime.timedelta(hours=5, minutes=30)
+            now_str = now_ist.strftime("%Y-%m-%d %H:%M:%S IST")
 
             creds = get_telegram_config()
             bot_state["telegram_status"] = "Active 🟢" if creds.get("enabled") and creds.get("bot_token") else "Not Configured ⚪"
@@ -844,7 +853,19 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
 class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        if self.path.startswith('/') and not self.path.startswith('/api/'):
+        if self.path in ['/ping', '/health', '/api/ping']:
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.send_header('Cache-Control', 'no-cache')
+            self.end_headers()
+            now_utc = datetime.datetime.now(datetime.timezone.utc).replace(tzinfo=None)
+            now_ist = now_utc + datetime.timedelta(hours=5, minutes=30)
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "server_time_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
+                "bot_status": bot_state.get("status")
+            }).encode('utf-8'))
+        elif self.path.startswith('/') and not self.path.startswith('/api/'):
             self.send_response(200)
             self.send_header('Content-Type', 'text/html; charset=utf-8')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
