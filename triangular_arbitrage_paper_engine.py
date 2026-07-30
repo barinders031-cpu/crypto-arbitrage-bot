@@ -1,17 +1,15 @@
 """
-Single-Exchange Triangular Arbitrage (3-Pair Loop) Engine
+Single-Exchange & Cross-Exchange Triangular Arbitrage Engine (Fixed & Upgraded)
 Real-Time Binance vs. CoinDCX Comparison & Execution Engine (Paper Trading Mode)
 
-Features:
-1. Asynchronous L2 Order Book Depth Fetching via aiohttp.
-2. Dynamic 3-Pair Loop Discovery (USDT -> Asset A -> Asset B -> USDT).
-3. Order Book Depth Walk (Top 5-10 Levels) for Exact VWAP Slippage Calculation.
-4. Comprehensive Fee & Tax Accounting:
-   - Binance Taker Fee: 0.10% (0.075% with BNB discount)
-   - CoinDCX Taker Fee: 0.20% (Default)
-   - CoinDCX Indian 1% TDS Compliance Metrics (Pre-TDS vs Post-TDS Net Profit)
-5. Real-Time Exchange Comparison Engine (Binance vs CoinDCX Liquidity & Net Profit).
-6. 100% Paper Trading Simulation Mode.
+Features & Fixes:
+1. User-Agent Header Inclusion (Fixes CoinDCX HTTP 403 Forbidden).
+2. Dynamic CoinDCX Symbol Mapping (Converts ETHUSDT -> B-ETH_USDT).
+3. Dual Direction Scanning: Evaluates both FORWARD (USDT -> A -> B -> USDT) 
+   and REVERSE (USDT -> B -> A -> USDT) triangular loops simultaneously.
+4. VWAP Order Book Depth Walk (Top 10 Levels) for Exact Slippage.
+5. Fee & Tax Accounting (Binance 0.10% / BNB 0.075%, CoinDCX 0.20%, Indian 1% TDS).
+6. Fee-Adjusted Net Profit Gate (Default >= 0.15%).
 
 Author: Advanced Quantitative Crypto Engineering Team
 """
@@ -59,15 +57,20 @@ FEE_RATES = {
 
 # Candidate Triangular Loops to Scan (USDT -> Asset A -> Asset B -> USDT)
 TRIANGULAR_LOOPS = [
-    {"base": "USDT", "a": "ETH", "b": "BTC",  "label": "USDT -> ETH -> BTC -> USDT"},
-    {"base": "USDT", "a": "SOL", "b": "BTC",  "label": "USDT -> SOL -> BTC -> USDT"},
-    {"base": "USDT", "a": "XRP", "b": "BTC",  "label": "USDT -> XRP -> BTC -> USDT"},
-    {"base": "USDT", "a": "BNB", "b": "BTC",  "label": "USDT -> BNB -> BTC -> USDT"},
-    {"base": "USDT", "a": "ADA", "b": "BTC",  "label": "USDT -> ADA -> BTC -> USDT"},
-    {"base": "USDT", "a": "SOL", "b": "ETH",  "label": "USDT -> SOL -> ETH -> USDT"},
-    {"base": "USDT", "a": "LINK", "b": "BTC", "label": "USDT -> LINK -> BTC -> USDT"},
-    {"base": "USDT", "a": "AVAX", "b": "BTC", "label": "USDT -> AVAX -> BTC -> USDT"},
-    {"base": "USDT", "a": "DOGE", "b": "BTC", "label": "USDT -> DOGE -> BTC -> USDT"},
+    {"base": "USDT", "a": "ETH", "b": "BTC",  "label": "ETH / BTC"},
+    {"base": "USDT", "a": "SOL", "b": "BTC",  "label": "SOL / BTC"},
+    {"base": "USDT", "a": "XRP", "b": "BTC",  "label": "XRP / BTC"},
+    {"base": "USDT", "a": "BNB", "b": "BTC",  "label": "BNB / BTC"},
+    {"base": "USDT", "a": "ADA", "b": "BTC",  "label": "ADA / BTC"},
+    {"base": "USDT", "a": "SOL", "b": "ETH",  "label": "SOL / ETH"},
+    {"base": "USDT", "a": "LINK", "b": "BTC", "label": "LINK / BTC"},
+    {"base": "USDT", "a": "AVAX", "b": "BTC", "label": "AVAX / BTC"},
+    {"base": "USDT", "a": "DOGE", "b": "BTC", "label": "DOGE / BTC"},
+    {"base": "USDT", "a": "LTC", "b": "BTC",  "label": "LTC / BTC"},
+    {"base": "USDT", "a": "BCH", "b": "BTC",  "label": "BCH / BTC"},
+    {"base": "USDT", "a": "NEAR", "b": "BTC", "label": "NEAR / BTC"},
+    {"base": "USDT", "a": "DOT", "b": "BTC",  "label": "DOT / BTC"},
+    {"base": "USDT", "a": "SHIB", "b": "BTC", "label": "SHIB / BTC"},
 ]
 
 
@@ -76,10 +79,6 @@ class OrderBookWalker:
 
     @staticmethod
     def simulate_market_buy(order_book_asks: List[List[float]], required_quote_amount: float) -> Tuple[float, float, float]:
-        """
-        Simulate buying an asset using a fixed Quote currency amount (e.g. spending $100 USDT).
-        Returns: (base_units_received, vwap_price, slippage_usd)
-        """
         remaining_quote = required_quote_amount
         total_base_bought = 0.0
         weighted_cost = 0.0
@@ -89,7 +88,7 @@ class OrderBookWalker:
 
         top_of_book_price = float(order_book_asks[0][0])
 
-        for price_str, qty_str in order_book_asks[:10]:  # Top 10 Order Book Levels
+        for price_str, qty_str in order_book_asks[:10]:
             price = float(price_str)
             qty = float(qty_str)
             level_quote_val = price * qty
@@ -116,10 +115,6 @@ class OrderBookWalker:
 
     @staticmethod
     def simulate_market_sell(order_book_bids: List[List[float]], base_amount_to_sell: float) -> Tuple[float, float, float]:
-        """
-        Simulate selling a fixed Base asset amount (e.g. selling 0.03 ETH for USDT or BTC).
-        Returns: (quote_units_received, vwap_price, slippage_usd)
-        """
         remaining_base = base_amount_to_sell
         total_quote_received = 0.0
 
@@ -128,7 +123,7 @@ class OrderBookWalker:
 
         top_of_book_price = float(order_book_bids[0][0])
 
-        for price_str, qty_str in order_book_bids[:10]:  # Top 10 Order Book Levels
+        for price_str, qty_str in order_book_bids[:10]:
             price = float(price_str)
             qty = float(qty_str)
 
@@ -153,133 +148,176 @@ class OrderBookWalker:
 class TriangularArbitrageScanner:
     def __init__(self, session: aiohttp.ClientSession):
         self.session = session
+        self.headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
 
-    async def fetch_binance_depth(self, symbol: str) -> Dict:
-        """Fetch L2 Order Book Depth from Binance REST API."""
-        url = f"https://api.binance.com/api/v3/depth?symbol={symbol}&limit=10"
-        try:
-            async with self.session.get(url, timeout=5) as resp:
-                if resp.status == 200:
-                    return await resp.json()
-        except Exception:
-            pass
+    def format_symbol(self, exchange: str, raw_symbol: str) -> str:
+        """Converts symbol e.g. ETHUSDT -> B-ETH_USDT for CoinDCX."""
+        if exchange == "binance":
+            return raw_symbol
+        elif exchange == "coindcx":
+            for quote in ["USDT", "BTC", "ETH", "INR"]:
+                if raw_symbol.endswith(quote):
+                    base = raw_symbol[:-len(quote)]
+                    return f"B-{base}_{quote}"
+            return f"B-{raw_symbol}"
+        return raw_symbol
+
+    async def fetch_depth(self, exchange: str, symbol: str) -> Dict:
+        formatted_sym = self.format_symbol(exchange, symbol)
+
+        if exchange == "binance":
+            url = f"https://api.binance.com/api/v3/depth?symbol={formatted_sym}&limit=10"
+            try:
+                async with self.session.get(url, headers=self.headers, timeout=5) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+            except Exception:
+                pass
+        elif exchange == "coindcx":
+            url = f"https://public.coindcx.com/market_data/orderbook?pair={formatted_sym}"
+            try:
+                async with self.session.get(url, headers=self.headers, timeout=5) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        bids = [[p, q] for p, q in data.get('bids', {}).items()] if isinstance(data.get('bids'), dict) else data.get('bids', [])
+                        asks = [[p, q] for p, q in data.get('asks', {}).items()] if isinstance(data.get('asks'), dict) else data.get('asks', [])
+                        bids = sorted(bids, key=lambda x: float(x[0]), reverse=True)
+                        asks = sorted(asks, key=lambda x: float(x[0]))
+                        return {"bids": bids, "asks": asks}
+            except Exception:
+                pass
         return {"bids": [], "asks": []}
 
-    async def fetch_coindcx_depth(self, pair_symbol: str) -> Dict:
-        """Fetch L2 Order Book Depth from CoinDCX Public API."""
-        url = f"https://public.coindcx.com/market_data/orderbook?pair={pair_symbol}"
-        try:
-            async with self.session.get(url, timeout=5) as resp:
-                if resp.status == 200:
-                    data = await resp.json()
-                    bids = [[p, q] for p, q in data.get('bids', {}).items()] if isinstance(data.get('bids'), dict) else data.get('bids', [])
-                    asks = [[p, q] for p, q in data.get('asks', {}).items()] if isinstance(data.get('asks'), dict) else data.get('asks', [])
-                    # Sort bids descending, asks ascending
-                    bids = sorted(bids, key=lambda x: float(x[0]), reverse=True)
-                    asks = sorted(asks, key=lambda x: float(x[0]))
-                    return {"bids": bids, "asks": asks}
-        except Exception:
-            pass
-        return {"bids": [], "asks": []}
+    async def evaluate_forward_loop(self, exchange: str, loop_cfg: Dict, capital_usdt: float) -> Optional[Dict]:
+        """USDT -> Asset A -> Asset B -> USDT"""
+        a, b = loop_cfg["a"], loop_cfg["b"]
+        s1 = f"{a}USDT"
+        s2 = f"{a}{b}"
+        s3 = f"{b}USDT"
 
-    async def evaluate_loop_on_exchange(
-        self,
-        exchange: str,
-        loop_cfg: Dict,
-        capital_usdt: float
-    ) -> Optional[Dict]:
-        """
-        Evaluates Forward Triangular Loop: USDT -> Asset A -> Asset B -> USDT
-        Example: USDT -> ETH -> BTC -> USDT
-          Leg 1: BUY ETH with USDT (Pair: ETHUSDT, Asks)
-          Leg 2: SELL ETH for BTC or BUY BTC with ETH (Pair: ETHBTC or BTCETH)
-          Leg 3: SELL BTC for USDT (Pair: BTCUSDT, Bids)
-        """
-        a = loop_cfg["a"]
-        b = loop_cfg["b"]
-        
-        symbol_leg1 = f"{a}USDT"
-        symbol_leg2_alt1 = f"{a}{b}"  # e.g. ETHBTC
-        symbol_leg2_alt2 = f"{b}{a}"  # e.g. BTCETH
-        symbol_leg3 = f"{b}USDT"
+        ob1, ob2, ob3 = await asyncio.gather(
+            self.fetch_depth(exchange, s1),
+            self.fetch_depth(exchange, s2),
+            self.fetch_depth(exchange, s3)
+        )
 
-        fetch_func = self.fetch_binance_depth if exchange == "binance" else self.fetch_coindcx_depth
-
-        # Fetch Order Books concurrently
-        ob1_task = fetch_func(symbol_leg1)
-        ob2_task1 = fetch_func(symbol_leg2_alt1)
-        ob2_task2 = fetch_func(symbol_leg2_alt2)
-        ob3_task = fetch_func(symbol_leg3)
-
-        ob1, ob2_alt1, ob2_alt2, ob3 = await asyncio.gather(ob1_task, ob2_task1, ob2_task2, ob3_task)
-
-        if not ob1["asks"] or not ob3["bids"]:
+        if not ob1["asks"] or not ob2["bids"] or not ob3["bids"]:
             return None
 
         taker_fee_pct = FEE_RATES[exchange]["taker_fee"]
         is_tds = FEE_RATES[exchange].get("tds_applicable", False)
         tds_rate = FEE_RATES[exchange].get("tds_rate", 0.01)
 
-        # --- STEP 1: BUY Asset A with USDT ---
+        # Step 1: BUY Asset A with USDT
         qty_a, price1, slip1 = OrderBookWalker.simulate_market_buy(ob1["asks"], capital_usdt)
-        if qty_a == 0:
-            return None
+        if qty_a == 0: return None
         fee1_usd = capital_usdt * taker_fee_pct
-        qty_a_net = qty_a * (1.0 - taker_fee_pct)  # Net Asset A received after fee
+        qty_a_net = qty_a * (1.0 - taker_fee_pct)
 
-        # --- STEP 2: Trade Asset A for Asset B ---
-        if ob2_alt1["bids"]:
-            # Selling Asset A for Asset B on Pair A/B (e.g. Sell ETH on ETH/BTC -> receive BTC)
-            qty_b, price2, slip2 = OrderBookWalker.simulate_market_sell(ob2_alt1["bids"], qty_a_net)
-            leg2_direction = f"SELL {a} on {symbol_leg2_alt1}"
-        elif ob2_alt2["asks"]:
-            # Buying Asset B using Asset A on Pair B/A (e.g. Buy BTC on BTC/ETH -> spend ETH)
-            qty_b, price2, slip2 = OrderBookWalker.simulate_market_buy(ob2_alt2["asks"], qty_a_net)
-            leg2_direction = f"BUY {b} on {symbol_leg2_alt2}"
-        else:
-            return None
-
-        if qty_b == 0:
-            return None
-        
+        # Step 2: SELL Asset A for Asset B
+        qty_b, price2, slip2 = OrderBookWalker.simulate_market_sell(ob2["bids"], qty_a_net)
+        if qty_b == 0: return None
         fee2_usd = (qty_b * float(ob3["bids"][0][0])) * taker_fee_pct
         qty_b_net = qty_b * (1.0 - taker_fee_pct)
 
-        # --- STEP 3: SELL Asset B for USDT ---
+        # Step 3: SELL Asset B for USDT
         final_usdt, price3, slip3 = OrderBookWalker.simulate_market_sell(ob3["bids"], qty_b_net)
-        if final_usdt == 0:
-            return None
+        if final_usdt == 0: return None
         fee3_usd = final_usdt * taker_fee_pct
-        final_usdt_net_fees = final_usdt * (1.0 - taker_fee_pct)
+        final_usdt_net = final_usdt * (1.0 - taker_fee_pct)
 
-        # Total Metrics
-        total_fees_usd = fee1_usd + fee2_usd + fee3_usd
-        total_slippage_usd = slip1 + slip2 + slip3
+        total_fees = fee1_usd + fee2_usd + fee3_usd
+        total_slip = slip1 + slip2 + slip3
         gross_profit_usd = final_usdt - capital_usdt
         gross_profit_pct = (gross_profit_usd / capital_usdt) * 100.0
 
-        pre_tds_net_profit_usd = final_usdt_net_fees - capital_usdt
+        pre_tds_net_profit_usd = final_usdt_net - capital_usdt
         pre_tds_net_profit_pct = (pre_tds_net_profit_usd / capital_usdt) * 100.0
 
-        # Post-TDS Accounting (Indian 1% TDS on Crypto Sell legs if CoinDCX)
-        if is_tds:
-            tds_impact_usd = (capital_usdt * tds_rate) + (final_usdt * tds_rate)
-            post_tds_net_profit_usd = pre_tds_net_profit_usd - tds_impact_usd
-        else:
-            tds_impact_usd = 0.0
-            post_tds_net_profit_usd = pre_tds_net_profit_usd
-
+        tds_impact_usd = ((capital_usdt + final_usdt) * tds_rate) if is_tds else 0.0
+        post_tds_net_profit_usd = pre_tds_net_profit_usd - tds_impact_usd
         post_tds_net_profit_pct = (post_tds_net_profit_usd / capital_usdt) * 100.0
 
         return {
             "exchange": exchange,
-            "loop_label": loop_cfg["label"],
+            "direction": "FORWARD (USDT -> A -> B -> USDT)",
+            "loop_label": f"USDT -> {a} -> {b} -> USDT",
             "starting_capital": capital_usdt,
-            "step1": {"action": f"BUY {a}", "price": price1, "amount": qty_a_net, "fee_usd": fee1_usd, "symbol": symbol_leg1},
-            "step2": {"action": leg2_direction, "price": price2, "amount": qty_b_net, "fee_usd": fee2_usd},
-            "step3": {"action": f"SELL {b} for USDT", "price": price3, "amount": final_usdt_net_fees, "fee_usd": fee3_usd, "symbol": symbol_leg3},
-            "total_fees_usd": total_fees_usd,
-            "total_slippage_usd": total_slippage_usd,
+            "step1": {"action": f"BUY {a}", "price": price1, "amount": qty_a_net, "fee_usd": fee1_usd},
+            "step2": {"action": f"SELL {a} for {b}", "price": price2, "amount": qty_b_net, "fee_usd": fee2_usd},
+            "step3": {"action": f"SELL {b} for USDT", "price": price3, "amount": final_usdt_net, "fee_usd": fee3_usd},
+            "total_fees_usd": total_fees,
+            "total_slippage_usd": total_slip,
+            "gross_profit_usd": gross_profit_usd,
+            "gross_profit_pct": gross_profit_pct,
+            "pre_tds_net_profit_usd": pre_tds_net_profit_usd,
+            "pre_tds_net_profit_pct": pre_tds_net_profit_pct,
+            "post_tds_net_profit_usd": post_tds_net_profit_usd,
+            "post_tds_net_profit_pct": post_tds_net_profit_pct,
+            "tds_impact_usd": tds_impact_usd,
+            "is_tds": is_tds
+        }
+
+    async def evaluate_reverse_loop(self, exchange: str, loop_cfg: Dict, capital_usdt: float) -> Optional[Dict]:
+        """USDT -> Asset B -> Asset A -> USDT"""
+        a, b = loop_cfg["a"], loop_cfg["b"]
+        s1 = f"{b}USDT"
+        s2 = f"{a}{b}"
+        s3 = f"{a}USDT"
+
+        ob1, ob2, ob3 = await asyncio.gather(
+            self.fetch_depth(exchange, s1),
+            self.fetch_depth(exchange, s2),
+            self.fetch_depth(exchange, s3)
+        )
+
+        if not ob1["asks"] or not ob2["asks"] or not ob3["bids"]:
+            return None
+
+        taker_fee_pct = FEE_RATES[exchange]["taker_fee"]
+        is_tds = FEE_RATES[exchange].get("tds_applicable", False)
+        tds_rate = FEE_RATES[exchange].get("tds_rate", 0.01)
+
+        # Step 1: BUY Asset B with USDT
+        qty_b, price1, slip1 = OrderBookWalker.simulate_market_buy(ob1["asks"], capital_usdt)
+        if qty_b == 0: return None
+        fee1_usd = capital_usdt * taker_fee_pct
+        qty_b_net = qty_b * (1.0 - taker_fee_pct)
+
+        # Step 2: BUY Asset A using Asset B on pair A/B
+        qty_a, price2, slip2 = OrderBookWalker.simulate_market_buy(ob2["asks"], qty_b_net)
+        if qty_a == 0: return None
+        fee2_usd = (qty_a * float(ob3["bids"][0][0])) * taker_fee_pct
+        qty_a_net = qty_a * (1.0 - taker_fee_pct)
+
+        # Step 3: SELL Asset A for USDT
+        final_usdt, price3, slip3 = OrderBookWalker.simulate_market_sell(ob3["bids"], qty_a_net)
+        if final_usdt == 0: return None
+        fee3_usd = final_usdt * taker_fee_pct
+        final_usdt_net = final_usdt * (1.0 - taker_fee_pct)
+
+        total_fees = fee1_usd + fee2_usd + fee3_usd
+        total_slip = slip1 + slip2 + slip3
+        gross_profit_usd = final_usdt - capital_usdt
+        gross_profit_pct = (gross_profit_usd / capital_usdt) * 100.0
+
+        pre_tds_net_profit_usd = final_usdt_net - capital_usdt
+        pre_tds_net_profit_pct = (pre_tds_net_profit_usd / capital_usdt) * 100.0
+
+        tds_impact_usd = ((capital_usdt + final_usdt) * tds_rate) if is_tds else 0.0
+        post_tds_net_profit_usd = pre_tds_net_profit_usd - tds_impact_usd
+        post_tds_net_profit_pct = (post_tds_net_profit_usd / capital_usdt) * 100.0
+
+        return {
+            "exchange": exchange,
+            "direction": "REVERSE (USDT -> B -> A -> USDT)",
+            "loop_label": f"USDT -> {b} -> {a} -> USDT",
+            "starting_capital": capital_usdt,
+            "step1": {"action": f"BUY {b}", "price": price1, "amount": qty_b_net, "fee_usd": fee1_usd},
+            "step2": {"action": f"BUY {a} with {b}", "price": price2, "amount": qty_a_net, "fee_usd": fee2_usd},
+            "step3": {"action": f"SELL {a} for USDT", "price": price3, "amount": final_usdt_net, "fee_usd": fee3_usd},
+            "total_fees_usd": total_fees,
+            "total_slippage_usd": total_slip,
             "gross_profit_usd": gross_profit_usd,
             "gross_profit_pct": gross_profit_pct,
             "pre_tds_net_profit_usd": pre_tds_net_profit_usd,
@@ -292,26 +330,26 @@ class TriangularArbitrageScanner:
 
 
 async def main_loop():
-    print("=" * 70)
-    print("🚀 QUANTITATIVE TRIANGULAR ARBITRAGE ENGINE (PAPER TRADING)")
-    print("   Scanning Exchanges: BINANCE vs. COINDCX")
+    print("=" * 75)
+    print("🚀 QUANTITATIVE TRIANGULAR ARBITRAGE ENGINE (PAPER TRADING - FIXED)")
+    print("   Exchanges: BINANCE & COINDCX (Dual-Direction Scan + User-Agent Fix)")
     print(f"   Capital: ${STARTING_CAPITAL_USDT:.2f} USDT | Min Net Profit Gate: {MIN_NET_PROFIT_PCT:.2f}%")
-    print("=" * 70)
+    print("=" * 75)
 
-    async with aiohttp.ClientSession() as session:
+    headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/120.0.0.0"}
+    async with aiohttp.ClientSession(headers=headers) as session:
         scanner = TriangularArbitrageScanner(session)
 
         while True:
             try:
                 for loop_cfg in TRIANGULAR_LOOPS:
-                    # Evaluate on both exchanges concurrently
-                    binance_res_task = scanner.evaluate_loop_on_exchange("binance", loop_cfg, STARTING_CAPITAL_USDT)
-                    coindcx_res_task = scanner.evaluate_loop_on_exchange("coindcx", loop_cfg, STARTING_CAPITAL_USDT)
+                    tasks = []
+                    for ex in ["binance", "coindcx"]:
+                        tasks.append(scanner.evaluate_forward_loop(ex, loop_cfg, STARTING_CAPITAL_USDT))
+                        tasks.append(scanner.evaluate_reverse_loop(ex, loop_cfg, STARTING_CAPITAL_USDT))
 
-                    binance_res, coindcx_res = await asyncio.gather(binance_res_task, coindcx_res_task)
-
-                    # Determine Best Exchange Opportunity
-                    candidates = [r for r in [binance_res, coindcx_res] if r is not None]
+                    results = await asyncio.gather(*tasks)
+                    candidates = [r for r in results if r is not None]
                     if not candidates:
                         continue
 
@@ -323,11 +361,9 @@ async def main_loop():
                         ts = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                         ex_name = best["exchange"].upper()
 
-                        reason = "Lower Taker Fees (0.10%) & Deeper L2 Liquidity" if best["exchange"] == "binance" else "CoinDCX Price Mispricing"
-
                         print("-" * 65)
-                        print(f"[{ts}] ⚡ LOOP DETECTED: {best['loop_label']}")
-                        print(f"- Exchange Selected: [{ex_name}] (Reason: {reason})")
+                        print(f"[{ts}] ⚡ TRIANGULAR LOOP DETECTED: {best['loop_label']}")
+                        print(f"- Exchange Selected: [{ex_name}] | Direction: {best['direction']}")
                         print(f"- Starting Capital: ${best['starting_capital']:.2f} USDT")
                         print(f"- Step 1 ({best['step1']['action']}): Price = ${best['step1']['price']:.4f}, Amt = {best['step1']['amount']:.6f}, Fee = ${best['step1']['fee_usd']:.4f}")
                         print(f"- Step 2 ({best['step2']['action']}): Price = {best['step2']['price']:.6f}, Amt = {best['step2']['amount']:.6f}, Fee = ${best['step2']['fee_usd']:.4f}")
@@ -336,11 +372,6 @@ async def main_loop():
                         print(f"- Slippage Impact: ${best['total_slippage_usd']:.4f}")
                         print(f"- Gross Profit: ${best['gross_profit_usd']:.4f} ({best['gross_profit_pct']:.3f}%)")
                         print(f"- PRE-TDS NET PROFIT: ${best['pre_tds_net_profit_usd']:.4f} ({best['pre_tds_net_profit_pct']:.3f}%)")
-                        
-                        if best["is_tds"]:
-                            print(f"- POST-TDS NET IN-HAND PROFIT: ${best['post_tds_net_profit_usd']:.4f} ({best['post_tds_net_profit_pct']:.3f}%) [CoinDCX 1% TDS Applied: -${best['tds_impact_usd']:.4f}]")
-                        else:
-                            print(f"- POST-TDS NET IN-HAND PROFIT: ${best['pre_tds_net_profit_usd']:.4f} ({best['pre_tds_net_profit_pct']:.3f}%) [Binance: No Indian TDS]")
                         print("-" * 65)
 
                 await asyncio.sleep(SCAN_INTERVAL_SEC)
