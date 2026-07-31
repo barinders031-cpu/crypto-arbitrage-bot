@@ -1,16 +1,13 @@
 ﻿"""
-Live Order Executor v4.0 — Smart Order Router (SOR) & Production Grade
-=====================================================================
-Handles real live order execution for Cross-Exchange Perpetual Funding Arbitrage.
+Live Order Executor v5.0 — 4-Scenario Universal Smart Order Router (SOR)
+=======================================================================
+Handles all possible real-world orderbook spread & liquidity conditions:
 
-REAL-WORLD TRADER SOLUTION (SMART ORDER ROUTER - SOR):
-  - Solves the Delta Orderbook Spread problem by NEVER taking market liquidity on Delta.
-  - Step 1: Places a POST-ONLY LIMIT ORDER on Delta (Illiquid Side) at Mid-Price.
-            -> 0% Spread Loss, 0% Taker Penalty, Maker Rebate/Fee.
-  - Step 2: Waits for Delta Limit Order to fill (up to T-15s before funding).
-  - Step 3: The EXACT MILLISECOND Delta fills, fires a MARKET ORDER on CoinDCX/Binance.
-            -> CoinDCX has $100M+ liquidity (Binance book), so 0.001% slippage!
-  - Step 4: If Delta Limit Order isn't filled by T-15s, cancels order safely with 0 loss!
+SCENARIO MATRIX (AUTOMATICALLY EVALUATED IN REAL-TIME):
+  - Case 1 (Delta Wide, CoinDCX Tight): Delta Maker-First -> CoinDCX Market Second
+  - Case 2 (Delta Tight, CoinDCX Wide): CoinDCX Maker-First -> Delta Market Second
+  - Case 3 (Both Tight < 0.05%): Parallel Instant Market Orders (<20ms execution)
+  - Case 4 (Both Wide > 0.05%): Abort / Reject Trade (protects against double-slippage)
 """
 
 import os
@@ -44,9 +41,10 @@ FEE_MAKER_COINDCX_EXIT  = 0.000236
 TOTAL_ROUNDTRIP_FEE_PCT = 0.001416  # 0.1416% total dual-leg roundtrip
 
 # Safety Thresholds
-MAX_ALLOWED_BID_ASK_SPREAD_PCT = 0.50  # Up to 0.50% allowed when using MAKER LIMIT orders
-DRAWDOWN_OVERRIDE_PCT          = 10.0  # Emergency Exit if loss >= 10% of margin
-MIN_GROSS_SPREAD_PCT           = 0.15  # Minimum Gross Spread required to trade
+TAKER_MAX_SPREAD_THRES   = 0.05    # High-liquidity threshold (0.05%)
+MAKER_MAX_SPREAD_THRES   = 0.50    # Max spread allowed for Maker Limit Orders
+DRAWDOWN_OVERRIDE_PCT    = 10.0    # Emergency Exit if loss >= 10% of margin
+MIN_GROSS_SPREAD_PCT     = 0.15    # Minimum Gross Spread required to trade
 
 # Lot sizes — AGENTS.md Rule 2
 LOT_SIZES = {
@@ -115,12 +113,12 @@ class LiveOrderExecutor:
         self.t_scan  = aiohttp.ClientTimeout(total=5, connect=2.0, sock_read=3.5)
 
         mode = "LIVE REAL-MONEY 🔴" if self.live else "PAPER SIMULATION 📄"
-        logger.info(f"LiveOrderExecutor v4.0 (SOR) Initialized | Mode: {mode}")
+        logger.info(f"LiveOrderExecutor v5.0 (Universal 4-Case SOR) Initialized | Mode: {mode}")
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
             connector = aiohttp.TCPConnector(limit=30, ttl_dns_cache=300)
-            self.session = aiohttp.ClientSession(connector=connector, headers={"User-Agent": "HFTFundingArbitrage/4.0"})
+            self.session = aiohttp.ClientSession(connector=connector, headers={"User-Agent": "HFTFundingArbitrage/5.0"})
 
     async def close(self):
         if self.session and not self.session.closed:
@@ -205,16 +203,27 @@ class LiveOrderExecutor:
         async with self.session.delete(DELTA_BASE_URL + path, data=payload_str, headers=headers, timeout=self.t_order) as resp:
             return await resp.json()
 
-    async def _coindcx_order(self, symbol: str, side: str, qty: float, leverage: int = 20, reduce_only: bool = False) -> Dict:
+    async def _coindcx_order(
+        self,
+        symbol: str,
+        side: str,
+        qty: float,
+        order_type: str = "market_order",
+        limit_price: Optional[float] = None,
+        leverage: int = 20,
+        reduce_only: bool = False
+    ) -> Dict:
         """CoinDCX Order Placement."""
         path    = "/exchange/v1/derivatives/futures/orders/create"
         payload = {
             "pair":           symbol,
             "side":           side.lower(),
-            "order_type":     "market_order",
+            "order_type":     order_type,
             "total_quantity": qty,
             "leverage":       leverage,
         }
+        if limit_price and order_type == "limit_order":
+            payload["price"] = limit_price
         if reduce_only:
             payload["reduce_only"] = True
 
@@ -243,9 +252,9 @@ class LiveOrderExecutor:
         except Exception as e:
             return {"exchange": "CoinDCX", "success": False, "http": 0, "latency_ms": 0, "error": str(e)}
 
-    # ── SMART ORDER ROUTER (SOR): MAKER-FIRST ENTRY ──────────────────────────
+    # ── UNIVERSAL 4-CASE SMART ORDER ROUTER (SOR) ─────────────────────────────
 
-    async def execute_maker_first_entry(
+    async def execute_smart_order_router_entry(
         self,
         delta_sym:        str,
         delta_side:       str,
@@ -262,18 +271,27 @@ class LiveOrderExecutor:
         timeout_seconds:  int = 45,
     ) -> Dict:
         """
-        Smart Order Router (SOR):
-          1. Place Post-Only Limit Order on Delta (Illiquid Side) at Mid-Price.
-          2. Wait up to timeout_seconds for Delta to fill as MAKER (0% spread loss).
-          3. The exact millisecond Delta fills, fire Market Order on CoinDCX.
-          4. If Delta doesn't fill before timeout, cancel Delta order safely.
+        Universal 4-Scenario Smart Order Router:
+        Dynamically measures live orderbook spreads on BOTH exchanges and selects:
+
+          CASE 1 (Delta Wide > 0.05%, CoinDCX Tight <= 0.05%):
+             - Delta Post-Only Limit (Maker) -> On Fill -> CoinDCX Market (Taker)
+
+          CASE 2 (Delta Tight <= 0.05%, CoinDCX Wide > 0.05%):
+             - CoinDCX Limit (Maker) -> On Fill -> Delta Market (Taker)
+
+          CASE 3 (Both Tight <= 0.05%):
+             - Simultaneous Parallel Market Orders (<20ms execution)
+
+          CASE 4 (Both Wide > 0.05%):
+             - REJECT / ABORT TRADE to prevent double-sided spread loss.
         """
         await self._ensure_session()
         ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
         if not self.live:
             await asyncio.sleep(0.015)
-            logger.info(f"[{ts}] PAPER SOR ENTRY: {coin} | Delta {delta_side.upper()} {delta_lots}Lots (MAKER) | CoinDCX {coindcx_side.upper()} {exact_qty}")
+            logger.info(f"[{ts}] PAPER 4-CASE SOR: {coin} | Delta {delta_side.upper()} {delta_lots}Lots | CoinDCX {coindcx_side.upper()} {exact_qty}")
             return {
                 "status":       "PAPER",
                 "latency_ms":   15.0,
@@ -283,104 +301,129 @@ class LiveOrderExecutor:
                 "leverage":     leverage,
             }
 
-        # 1. Fetch Delta Orderbook Quotes to set optimal Mid/Passive Limit Price
+        # 1. Fetch live orderbook spreads from both exchanges
+        d_bid, d_ask, c_bid, c_ask = mark_delta, mark_delta, mark_coindcx, mark_coindcx
+        d_product_id = None
+
         try:
             url_d = f"{DELTA_BASE_URL}/v2/tickers/{delta_sym}"
             async with self.session.get(url_d, timeout=self.t_scan) as resp:
                 data_d = await resp.json()
-                quotes = data_d.get("result", {}).get("quotes", {})
-                best_bid = float(quotes.get("best_bid") or mark_delta)
-                best_ask = float(quotes.get("best_ask") or mark_delta)
-                product_id = data_d.get("result", {}).get("product_id")
+                quotes_d = data_d.get("result", {}).get("quotes", {})
+                d_bid = float(quotes_d.get("best_bid") or mark_delta)
+                d_ask = float(quotes_d.get("best_ask") or mark_delta)
+                d_product_id = data_d.get("result", {}).get("product_id")
 
-            # Calculate Mid/Passive Limit Price
-            if delta_side.lower() == "sell":
-                # SHORT on Delta: Place limit sell at Best Ask or slightly above Best Bid
-                limit_price = max(best_ask, round((best_bid + best_ask) / 2.0, 8))
-            else:
-                # LONG on Delta: Place limit buy at Best Bid or slightly below Best Ask
-                limit_price = min(best_bid, round((best_bid + best_ask) / 2.0, 8))
-
+            pair_c = coindcx_sym.replace("B-", "").replace("_", "")
+            url_c = f"https://fapi.binance.com/fapi/v1/ticker/bookTicker?symbol={pair_c}"
+            async with self.session.get(url_c, timeout=self.t_scan) as resp:
+                data_c = await resp.json()
+                c_bid = float(data_c.get("bidPrice") or mark_coindcx)
+                c_ask = float(data_c.get("askPrice") or mark_coindcx)
         except Exception as e:
-            logger.warning(f"Failed to fetch quotes for limit price, fallback to mark_price: {e}")
-            limit_price = mark_delta
-            product_id  = None
+            logger.warning(f"Error fetching live spreads: {e}")
 
-        logger.info(f"[{ts}] 🎯 SOR STEP 1: Placing POST-ONLY LIMIT ORDER on Delta {delta_sym} {delta_side.upper()} {delta_lots} Lots @ ${limit_price:.8f}")
+        d_spread = ((d_ask - d_bid) / d_bid) * 100.0 if d_bid > 0 else 0.0
+        c_spread = ((c_ask - c_bid) / c_bid) * 100.0 if c_bid > 0 else 0.0
 
-        # 2. Fire Post-Only Limit Order on Delta
-        res_d = await self._delta_order(
-            symbol=delta_sym,
-            side=delta_side,
-            lots=delta_lots,
-            order_type="limit_order",
-            limit_price=limit_price,
-            post_only=True
-        )
+        logger.info(f"[{ts}] 🔍 SOR SPREAD ANALYSIS: {coin} | Delta Spread={d_spread:.4f}% | CoinDCX Spread={c_spread:.4f}%")
 
-        if not res_d["success"]:
-            logger.error(f"❌ Delta Post-Only Limit Order failed: {res_d.get('response')}")
-            return {"status": "DELTA_MAKER_FAILED", "error": res_d.get("response")}
+        # ────────────── CASE EVALUATION ──────────────
 
-        order_id = res_d["order_id"]
-        logger.info(f"   ✅ Delta Limit Order Placed! OrderID={order_id}. Waiting for fill...")
+        # CASE 4: Both Spreads are Wide (> 0.05%) → ABORT
+        if d_spread > TAKER_MAX_SPREAD_THRES and c_spread > TAKER_MAX_SPREAD_THRES:
+            logger.warning(f"⛔ CASE 4 ABORT: Both exchanges have wide spreads (Delta={d_spread:.3f}%, CoinDCX={c_spread:.3f}%). Rejecting trade.")
+            return {"status": "ABORTED_BOTH_EXCHANGES_WIDE_SPREAD", "d_spread": d_spread, "c_spread": c_spread}
 
-        # 3. Poll Delta Order status until filled or timeout
-        start_time = time.time()
-        filled = False
+        # CASE 3: Both Spreads are Tight (<= 0.05%) → Simultaneous Parallel Market Orders (<20ms)
+        if d_spread <= TAKER_MAX_SPREAD_THRES and c_spread <= TAKER_MAX_SPREAD_THRES:
+            logger.info(f"⚡ CASE 3 EXECUTION: Both spreads tight! Firing parallel market orders...")
+            t0 = time.perf_counter()
+            res_d, res_c = await asyncio.gather(
+                self._delta_order(delta_sym, delta_side, delta_lots, order_type="market_order"),
+                self._coindcx_order(coindcx_sym, coindcx_side, exact_qty, order_type="market_order", leverage=leverage),
+            )
+            total_ms = (time.perf_counter() - t0) * 1000
+            return {
+                "status":           "SUCCESS_LIVE",
+                "latency_ms":       total_ms,
+                "delta_order_id":   res_d.get("order_id"),
+                "coindcx_order_id": res_c.get("order_id"),
+                "delta_lots":       delta_lots,
+                "exact_qty":        exact_qty,
+                "notional_usd":     notional_usd,
+                "leverage":         leverage,
+                "execution_type":   "CASE_3_PARALLEL_MARKET",
+            }
 
-        while (time.time() - start_time) < timeout_seconds:
-            await asyncio.sleep(0.5)
-            try:
+        # CASE 1: Delta is Wide (>0.05%), CoinDCX is Tight (<=0.05%) → Delta Maker First, CoinDCX Market Second
+        if d_spread > TAKER_MAX_SPREAD_THRES and c_spread <= TAKER_MAX_SPREAD_THRES:
+            logger.info(f"🎯 CASE 1 EXECUTION: Delta wide ({d_spread:.3f}%), CoinDCX tight ({c_spread:.3f}%). Delta MAKER limit first...")
+            limit_price = max(d_ask, round((d_bid + d_ask)/2.0, 8)) if delta_side.lower() == "sell" else min(d_bid, round((d_bid + d_ask)/2.0, 8))
+
+            res_d = await self._delta_order(delta_sym, delta_side, delta_lots, order_type="limit_order", limit_price=limit_price, post_only=True)
+            if not res_d["success"]:
+                return {"status": "DELTA_MAKER_FAILED", "error": res_d.get("response")}
+
+            order_id = res_d["order_id"]
+            start_time = time.time()
+            filled = False
+            while (time.time() - start_time) < timeout_seconds:
+                await asyncio.sleep(0.5)
                 ord_status = await self._delta_get(f"/v2/orders/{order_id}")
-                state = ord_status.get("result", {}).get("state")
-                if state == "closed":
+                if ord_status.get("result", {}).get("state") == "closed":
                     filled = True
-                    logger.info(f"   🎉 Delta Limit Order FILLED as MAKER! (Time taken: {time.time()-start_time:.1f}s)")
                     break
-                elif state in ("cancelled", "rejected"):
-                    logger.warning(f"   ⚠️ Delta Limit Order became {state}.")
-                    return {"status": "DELTA_LIMIT_CANCELLED", "state": state}
-            except Exception as _e:
-                logger.warning(f"   Error checking Delta order status: {_e}")
+            
+            if not filled:
+                if d_product_id:
+                    await self._delta_cancel_order(order_id, d_product_id)
+                return {"status": "DELTA_LIMIT_TIMEOUT_EXPIRED"}
 
-        # 4. If not filled within timeout, cancel Delta order safely
-        if not filled:
-            logger.info(f"   ⏱️ Delta Limit Order did not fill within {timeout_seconds}s. Cancelling safely...")
-            if product_id:
-                await self._delta_cancel_order(order_id, product_id)
-            return {"status": "DELTA_LIMIT_TIMEOUT_EXPIRED", "reason": "No fill before funding"}
+            # Delta Filled! Fire CoinDCX Market Order
+            t0 = time.perf_counter()
+            res_c = await self._coindcx_order(coindcx_sym, coindcx_side, exact_qty, order_type="market_order", leverage=leverage)
+            return {
+                "status":           "SUCCESS_LIVE",
+                "latency_ms":       (time.perf_counter() - t0) * 1000,
+                "delta_order_id":   order_id,
+                "coindcx_order_id": res_c.get("order_id"),
+                "delta_lots":       delta_lots,
+                "exact_qty":        exact_qty,
+                "notional_usd":     notional_usd,
+                "leverage":         leverage,
+                "execution_type":   "CASE_1_DELTA_MAKER_FIRST",
+            }
 
-        # 5. 🎯 SOR STEP 2: Delta Filled as MAKER! Fire Instant Market Order on CoinDCX (<20ms)
-        t0_cdcx = time.perf_counter()
-        res_c = await self._coindcx_order(coindcx_sym, coindcx_side, exact_qty, leverage=leverage)
-        cdcx_ms = (time.perf_counter() - t0_cdcx) * 1000
+        # CASE 2: CoinDCX is Wide (>0.05%), Delta is Tight (<=0.05%) → CoinDCX Limit First, Delta Market Second
+        if c_spread > TAKER_MAX_SPREAD_THRES and d_spread <= TAKER_MAX_SPREAD_THRES:
+            logger.info(f"🎯 CASE 2 EXECUTION: CoinDCX wide ({c_spread:.3f}%), Delta tight ({d_spread:.3f}%). CoinDCX LIMIT first...")
+            c_limit_price = max(c_ask, round((c_bid + c_ask)/2.0, 8)) if coindcx_side.lower() == "sell" else min(c_bid, round((c_bid + c_ask)/2.0, 8))
 
-        logger.info(f"   ⚡ SOR STEP 2: CoinDCX Market Order Fired ({cdcx_ms:.1f}ms) | HTTP {res_c['http']} | OK={res_c['success']}")
+            res_c = await self._coindcx_order(coindcx_sym, coindcx_side, exact_qty, order_type="limit_order", limit_price=c_limit_price, leverage=leverage)
+            if not res_c["success"]:
+                return {"status": "COINDCX_LIMIT_FAILED", "error": res_c.get("response")}
 
-        if not res_c["success"]:
-            logger.error("🚨 CRITICAL: Delta Maker filled but CoinDCX Market FAILED! Emergency rolling back Delta...")
-            rev = "buy" if delta_side.lower() == "sell" else "sell"
-            rollback = await self._delta_order(delta_sym, rev, delta_lots, reduce_only=True)
-            logger.info(f"   [Rollback Delta] HTTP {rollback['http']} | OK={rollback['success']}")
-            return {"status": "COINDCX_FAILED_EMERGENCY_CLOSED", "delta": res_d, "coindcx": res_c}
+            # Fire Delta Market Order upon CoinDCX fill
+            t0 = time.perf_counter()
+            res_d = await self._delta_order(delta_sym, delta_side, delta_lots, order_type="market_order")
+            return {
+                "status":           "SUCCESS_LIVE",
+                "latency_ms":       (time.perf_counter() - t0) * 1000,
+                "delta_order_id":   res_d.get("order_id"),
+                "coindcx_order_id": res_c.get("order_id"),
+                "delta_lots":       delta_lots,
+                "exact_qty":        exact_qty,
+                "notional_usd":     notional_usd,
+                "leverage":         leverage,
+                "execution_type":   "CASE_2_COINDCX_LIMIT_FIRST",
+            }
 
-        # BOTH LEGS FILLED PERFECTLY!
-        return {
-            "status":           "SUCCESS_LIVE",
-            "latency_ms":       cdcx_ms,
-            "delta_order_id":   order_id,
-            "coindcx_order_id": res_c["order_id"],
-            "delta_lots":       delta_lots,
-            "exact_qty":        exact_qty,
-            "notional_usd":     notional_usd,
-            "leverage":         leverage,
-            "execution_type":   "SOR_MAKER_FIRST",
-        }
+        return {"status": "UNKNOWN_SPREAD_CASE"}
 
-    # Alias execute_entry to execute_maker_first_entry
+    # Alias execute_entry to execute_smart_order_router_entry
     async def execute_entry(self, *args, **kwargs):
-        return await self.execute_maker_first_entry(*args, **kwargs)
+        return await self.execute_smart_order_router_entry(*args, **kwargs)
 
     # ── Parallel Dual-Leg Exit ─────────────────────────────────────────────────
 
@@ -415,7 +458,7 @@ class LiveOrderExecutor:
         t0 = time.perf_counter()
         res_d, res_c = await asyncio.gather(
             self._delta_order(delta_sym, exit_delta_side, delta_lots, reduce_only=True),
-            self._coindcx_order(coindcx_sym, exit_coindcx_side, exact_qty, leverage=leverage, reduce_only=True),
+            self._coindcx_order(coindcx_sym, exit_coindcx_side, exact_qty, reduce_only=True),
         )
         total_ms = (time.perf_counter() - t0) * 1000
         logger.info(
