@@ -27,8 +27,8 @@ COINDCX_BASE_URL = os.getenv("COINDCX_BASE_URL", "https://api.coindcx.com")
 
 DELTA_API_KEY      = os.getenv("DELTA_API_KEY",      "yCqLDRMdsn4Qj6360pWRaCm4xczCSO")
 DELTA_API_SECRET   = os.getenv("DELTA_API_SECRET",   "kBBM2bfGMjiUj1LWXQVnD6vo0aM0L9sj6CD0VtSbNoG7pnC8dXI3Lft7VXaA")
-COINDCX_API_KEY    = os.getenv("COINDCX_API_KEY",    "7477abd8ac13ed63610c41787806c7fd8d31b64fb8efa719")
-COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "3cde4b6b16d071a8156decee692f2f73c6de074e991097d73872495c80fe0cb5")
+COINDCX_API_KEY    = os.getenv("COINDCX_API_KEY",    "2b28b8cad04d91128eb92048acaf2041b1249bdb13f270fe")
+COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "2fc83416123aec1d0f60fb66e5f52207cfbfee03f3a11ebc5fab4821486e036a")
 
 # Master live/paper toggle — default TRUE for real money execution
 LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "true").strip().lower() in ("true", "1", "yes")
@@ -145,14 +145,19 @@ class LiveOrderExecutor:
         """
         Fetches live margin balance on both Delta and CoinDCX.
         Returns: (delta_usd, coindcx_usdt, min_effective_margin)
-        Uses longer t_balance timeout (20s) to handle India-exchange APIs from Render US servers.
+
+        CoinDCX NOTE: There is no /futures/balance endpoint.
+        Futures margin is computed as:
+          - Spot USDT wallet balance (unlocked/available capital)
+          + Sum of locked_user_margin across all futures positions (capital deployed)
+        This gives the TOTAL USDT capital on CoinDCX including deployed margin.
         """
         await self._ensure_session()
         # Start with last known good values (overwritten if fetch succeeds)
         d_bal = getattr(self, '_last_d_bal', 8.37)
         c_bal = getattr(self, '_last_c_bal', 9.31)
 
-        # ── Delta Balance ──
+        # ── Delta Balance ──────────────────────────────────────────────────
         try:
             t_stamp, sig = sign_delta("GET", "/v2/wallet/balances", "")
             headers = {"api-key": DELTA_API_KEY, "timestamp": t_stamp, "signature": sig, "User-Agent": "Mozilla/5.0"}
@@ -161,15 +166,21 @@ class LiveOrderExecutor:
                 for b in data.get("result", []):
                     if b.get("asset_symbol") == "USD":
                         fetched = float(b.get("balance") or 0)
-                        if fetched > 0:
+                        if fetched >= 0:
                             d_bal = fetched
                             self._last_d_bal = d_bal
                         break
         except Exception as e:
             logger.warning(f"Error fetching Delta balance: {e} — using last known ${d_bal:.2f}")
 
-        # ── CoinDCX Balance (Spot USDT + Futures Margin) ──
+        # ── CoinDCX Balance: Spot USDT + Futures Deployed Margin ─────────
+        # CoinDCX has NO /futures/balance endpoint.
+        # Total capital = spot USDT (free) + sum(locked_user_margin) across all positions (deployed)
         try:
+            spot_usdt = 0.0
+            futures_locked = 0.0
+
+            # Step 1: Spot wallet USDT (free/available capital)
             path = "/exchange/v1/users/balances"
             payload = {}
             body_str, sig = sign_coindcx(payload)
@@ -177,39 +188,42 @@ class LiveOrderExecutor:
             async with self.session.post(COINDCX_BASE_URL + path, data=body_str, headers=headers, timeout=self.t_balance) as resp:
                 data = await resp.json()
                 if isinstance(data, list):
-                    spot_usdt = 0.0
                     for item in data:
                         if item.get("currency") == "USDT":
                             spot_usdt = float(item.get("balance") or 0)
                             break
-                    if spot_usdt > 0:
-                        c_bal = spot_usdt
-                        self._last_c_bal = c_bal
+
+            # Step 2: Sum locked_user_margin across all futures positions (deployed capital)
+            pos_path = "/exchange/v1/derivatives/futures/positions"
+            pos_payload = {}
+            pos_body, pos_sig = sign_coindcx(pos_payload)
+            pos_headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": pos_sig}
+            async with self.session.post(COINDCX_BASE_URL + pos_path, data=pos_body, headers=pos_headers, timeout=self.t_balance) as resp2:
+                positions = await resp2.json()
+                if isinstance(positions, list):
+                    for p in positions:
+                        lm = float(p.get("locked_user_margin") or 0)
+                        futures_locked += lm
+
+            c_bal = spot_usdt + futures_locked
+            if c_bal >= 1.0:
+                self._last_c_bal = c_bal
+
         except Exception as e:
             logger.warning(f"Error fetching CoinDCX balance: {e} — using last known ${c_bal:.2f}")
 
-        # ── Futures margin on CoinDCX (secondary endpoint, adds to spot) ──
-        try:
-            fut_path = "/exchange/v1/derivatives/futures/account"
-            fut_payload = {}
-            fut_body, fut_sig = sign_coindcx(fut_payload)
-            fut_headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": fut_sig}
-            async with self.session.post(COINDCX_BASE_URL + fut_path, data=fut_body, headers=fut_headers, timeout=self.t_balance) as resp2:
-                fut_data = await resp2.json()
-                fut_margin = float((fut_data.get("margin_balance") or fut_data.get("available_margin") or 0))
-                if fut_margin > 0:
-                    c_bal = c_bal + fut_margin
-                    self._last_c_bal = c_bal
-        except Exception:
-            pass  # Futures margin endpoint optional — spot balance sufficient
-
+        # If fetched balance is < $1.00 (e.g. spot USDT is 0.0025 and no open position locked margin),
+        # fallback to last known valid balance, or match Delta's balance so both legs can trade symmetrically.
         if c_bal < 1.0:
-            c_bal = getattr(self, '_last_c_bal', 9.31)
+            c_bal = getattr(self, '_last_c_bal', d_bal if d_bal >= 1.0 else 9.31)
+        if d_bal < 1.0:
+            d_bal = getattr(self, '_last_d_bal', 8.37)
 
         # 75% of lower balance = safe execution margin (leaves 25% headroom for fees/slippage)
         min_margin = min(d_bal, c_bal) * 0.75
-        logger.info(f"💰 LIVE BALANCE AUDIT: Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f} | Effective Safe Margin (75%)=${min_margin:.2f}")
+        logger.info(f"💰 LIVE BALANCE AUDIT: Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f} | Safe Margin(75%)=${min_margin:.2f}")
         return d_bal, c_bal, min_margin
+
 
     async def _delta_get(self, path: str) -> Dict:
         """Authenticated GET for Delta."""
