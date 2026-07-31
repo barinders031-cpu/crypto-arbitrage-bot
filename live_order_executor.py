@@ -31,7 +31,7 @@ COINDCX_API_KEY    = os.getenv("COINDCX_API_KEY",    "2b28b8cad04d91128eb92048ac
 COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "2fc83416123aec1d0f60fb66e5f52207cfbfee03f3a11ebc5fab4821486e036a")
 
 # Master live/paper toggle — default TRUE for real money execution
-LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "true").strip().lower() in ("true", "1", "yes")
+LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "false").strip().lower() in ("true", "1", "yes")
 
 # Fee Schedule (Inc. 18% GST)
 FEE_TAKER_DELTA_ENTRY   = 0.00059
