@@ -642,6 +642,14 @@ def bot_background_loop():
                                 add_log(f"   ⛔ Entry ABORTED — Pre-flight health check failed ({entry_result.get('reason')})")
                                 executed_windows.add(funding_window_key)
                                 continue
+                            elif st == "DELTA_LIMIT_TIMEOUT_EXPIRED":
+                                add_log(f"   ⏱️ SOR Limit Order on Delta did not fill before T-15s. Order cancelled safely with ZERO loss.")
+                                executed_windows.add(funding_window_key)
+                                continue
+                            elif st in ("DELTA_MAKER_FAILED", "DELTA_LIMIT_CANCELLED"):
+                                add_log(f"   ⛔ SOR Entry ABORTED — Delta limit order was not placed or cancelled ({entry_result.get('reason', st)})")
+                                executed_windows.add(funding_window_key)
+                                continue
                             elif st in ("DELTA_FAILED_EMERGENCY_CLOSED", "COINDCX_FAILED_EMERGENCY_CLOSED"):
                                 add_log(f"   🚨 EMERGENCY ROLLBACK TRIGGERED — One leg failed to fill, opposite leg closed in <500ms to preserve neutrality.")
                                 executed_windows.add(funding_window_key)
