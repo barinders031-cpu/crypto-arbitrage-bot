@@ -9,4 +9,6 @@ venv/
 *.zip
 *.json
 !telegram_config.json
+!bot_state_persistent.json
 !render.yaml
+

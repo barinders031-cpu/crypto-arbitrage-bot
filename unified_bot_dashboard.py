@@ -31,6 +31,7 @@ if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
 
 PORT = int(os.environ.get("PORT", 5050))
 CONFIG_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "telegram_config.json")
+STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "bot_state_persistent.json")
 
 # Global In-Memory State
 live_logs = []
@@ -64,6 +65,47 @@ bot_state = {
     "triangular_total_trades": 0,
     "triangular_net_pnl_usd": 0.0
 }
+
+def save_persistent_state():
+    try:
+        data = {
+            "paper_wallet_balance": bot_state.get("paper_wallet_balance", 10.0),
+            "net_pnl_usd": bot_state.get("net_pnl_usd", 0.0),
+            "total_trades": bot_state.get("total_trades", 0),
+            "paper_history": paper_history,
+            "triangular_paper_balance": bot_state.get("triangular_paper_balance", 10.0),
+            "triangular_net_pnl_usd": bot_state.get("triangular_net_pnl_usd", 0.0),
+            "triangular_total_trades": bot_state.get("triangular_total_trades", 0),
+            "triangular_history": triangular_history
+        }
+        with open(STATE_FILE, "w") as f:
+            json.dump(data, f, indent=2)
+    except Exception as e:
+        print(f"Error saving persistent state: {e}")
+
+def load_persistent_state():
+    global paper_history, triangular_history
+    if os.path.exists(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r") as f:
+                data = json.load(f)
+                bot_state["paper_wallet_balance"] = data.get("paper_wallet_balance", 10.0)
+                bot_state["net_pnl_usd"] = data.get("net_pnl_usd", 0.0)
+                bot_state["total_trades"] = data.get("total_trades", 0)
+                bot_state["triangular_paper_balance"] = data.get("triangular_paper_balance", 10.0)
+                bot_state["triangular_net_pnl_usd"] = data.get("triangular_net_pnl_usd", 0.0)
+                bot_state["triangular_total_trades"] = data.get("triangular_total_trades", 0)
+                
+                if isinstance(data.get("paper_history"), list):
+                    paper_history.clear()
+                    paper_history.extend(data["paper_history"])
+                if isinstance(data.get("triangular_history"), list):
+                    triangular_history.clear()
+                    triangular_history.extend(data["triangular_history"])
+        except Exception as e:
+            print(f"Error loading persistent state: {e}")
+
+load_persistent_state()
 
 def get_telegram_config():
     if os.path.exists(CONFIG_FILE):
@@ -264,6 +306,7 @@ def bot_background_loop():
                         "balance":      f"${bot_state['paper_wallet_balance']:.2f}"
                     }
                     paper_history.insert(0, trade_entry)
+                    save_persistent_state()
 
                     add_log(f"⚡ [SCALPER EXIT T+{secs_after_funding:.1f}s] Neutral Exit fired for {coin} (0% Delta Exit Fee Waiver).")
                     add_log(f"✅ {lev:.0f}X TRADE COMPLETE ({coin}): Gross +${gross:.4f} | Fees -${fee:.4f} | NET +${net:.4f} USD")
@@ -746,6 +789,7 @@ def triangular_background_loop():
                         "balance": f"${bot_state['triangular_paper_balance']:.4f}"
                     }
                     triangular_history.insert(0, trade_entry)
+                    save_persistent_state()
 
                     add_triangular_log(f"🔺 [BINANCE TRIANGULAR EXECUTION] {top['label']} | NET: {top['net_pnl_pct']} (${net_usd:+.4f}) | New Balance: ${bot_state['triangular_paper_balance']:.4f}")
                     
