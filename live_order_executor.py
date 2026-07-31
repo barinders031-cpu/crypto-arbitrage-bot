@@ -212,11 +212,26 @@ class LiveOrderExecutor:
         except Exception as e:
             logger.warning(f"Error fetching CoinDCX balance: {e} — using last known ${c_bal:.2f}")
 
-        # If fetched balance is < $1.00 (e.g. spot USDT is 0.0025 and no open position locked margin),
-        # fallback to last known valid balance, or match Delta's balance so both legs can trade symmetrically.
-        if c_bal < 1.0:
+        # Check environment variable manual overrides first (if user set exact balance in Render)
+        env_c_bal = os.getenv("COINDCX_OVERRIDE_BALANCE") or os.getenv("COINDCX_BALANCE_USD")
+        env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")  or os.getenv("DELTA_BALANCE_USD")
+
+        if env_c_bal:
+            try:
+                c_bal = float(env_c_bal)
+                self._last_c_bal = c_bal
+            except ValueError:
+                pass
+        elif c_bal < 1.0:
             c_bal = getattr(self, '_last_c_bal', d_bal if d_bal >= 1.0 else 9.31)
-        if d_bal < 1.0:
+
+        if env_d_bal:
+            try:
+                d_bal = float(env_d_bal)
+                self._last_d_bal = d_bal
+            except ValueError:
+                pass
+        elif d_bal < 1.0:
             d_bal = getattr(self, '_last_d_bal', 8.37)
 
         # 75% of lower balance = safe execution margin (leaves 25% headroom for fees/slippage)
