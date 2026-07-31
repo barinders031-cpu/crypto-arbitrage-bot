@@ -116,7 +116,22 @@ class LiveOrderExecutor:
         logger.info(f"LiveOrderExecutor v5.1 Initialized | Mode: {mode}")
 
     async def _ensure_session(self):
-        if self.session is None or self.session.closed:
+        # Recreate session if missing, closed, or attached to a stale/dead loop
+        try:
+            need_new = (
+                self.session is None
+                or self.session.closed
+                or self.session.connector is None
+                or self.session.connector.closed
+            )
+        except Exception:
+            need_new = True
+        if need_new:
+            try:
+                if self.session and not self.session.closed:
+                    await self.session.close()
+            except Exception:
+                pass
             connector = aiohttp.TCPConnector(limit=30, ttl_dns_cache=300)
             self.session = aiohttp.ClientSession(connector=connector, headers={"User-Agent": "HFTFundingArbitrage/5.1"})
 

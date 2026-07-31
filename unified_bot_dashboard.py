@@ -25,11 +25,30 @@ import threading
 import os
 import sys
 import asyncio
+import concurrent.futures
 try:
     from dotenv import load_dotenv
     load_dotenv()
 except Exception:
     pass
+
+# ── Persistent Async Event Loop ────────────────────────────────────────────────
+# Using a single persistent loop running in a dedicated daemon thread.
+# This fixes "Event loop is closed" errors caused by repeated asyncio.run() calls
+# from background threads, since asyncio.run() creates AND destroys a loop each call.
+_ASYNC_LOOP = asyncio.new_event_loop()
+
+def _start_async_loop(loop):
+    asyncio.set_event_loop(loop)
+    loop.run_forever()
+
+_ASYNC_THREAD = threading.Thread(target=_start_async_loop, args=(_ASYNC_LOOP,), daemon=True)
+_ASYNC_THREAD.start()
+
+def run_async(coro, timeout=30):
+    """Thread-safe: Run a coroutine on the persistent event loop and block until result."""
+    future = asyncio.run_coroutine_threadsafe(coro, _ASYNC_LOOP)
+    return future.result(timeout=timeout)
 
 # Live Order Executor — loads LIVE_EXECUTION flag from environment
 try:
@@ -374,7 +393,7 @@ def bot_background_loop():
                     # ── Live Exit ──────────────────────────────────────
                     if LIVE_EXECUTION and _live_executor and pe.get("live_entry_success"):
                         try:
-                            exit_result = asyncio.run(_live_executor.execute_exit(
+                            exit_result = run_async(_live_executor.execute_exit(
                                 delta_sym       = pe["delta_sym"],
                                 delta_side      = pe["delta_side"],
                                 delta_lots      = pe["delta_lots"],
@@ -444,7 +463,7 @@ def bot_background_loop():
             # ── PHASE 2: Fetch Live Real Account Balances & Rates ──
             if _live_executor:
                 try:
-                    _d_bal, _c_bal, _min_margin = asyncio.run(_live_executor.fetch_live_balances())
+                    _d_bal, _c_bal, _min_margin = run_async(_live_executor.fetch_live_balances())
                     _total_capital = _d_bal + _c_bal
                     bot_state["real_balance_display"] = f"Delta: ${_d_bal:.2f} | CoinDCX: ${_c_bal:.2f} | Total: ${_total_capital:.2f}"
                     bot_state["delta_balance"] = _d_bal
@@ -629,7 +648,7 @@ def bot_background_loop():
                     live_entry_success = False
                     if LIVE_EXECUTION and _live_executor:
                         try:
-                            entry_result = asyncio.run(_live_executor.execute_entry(
+                            entry_result = run_async(_live_executor.execute_entry(
                                 delta_sym       = delta_sym,
                                 delta_side      = delta_side,
                                 delta_lots      = lots,
@@ -1014,19 +1033,31 @@ def triangular_background_loop():
         time.sleep(3)
 
 def self_ping_loop():
-    time.sleep(30)
+    """Keeps Render free-tier alive by self-pinging every 10 minutes.
+    Render automatically sets RENDER_EXTERNAL_URL on all services.
+    """
+    time.sleep(30)  # Allow server to start first
+    consecutive_fails = 0
     while True:
         external_url = os.getenv("RENDER_EXTERNAL_URL") or os.getenv("SELF_PING_URL")
         if external_url:
             target_url = f"{external_url.rstrip('/')}/ping"
             try:
-                req = urllib.request.Request(target_url, headers={'User-Agent': 'Mozilla/5.0 SelfPinger'})
-                with urllib.request.urlopen(req, timeout=10) as res:
+                req = urllib.request.Request(target_url, headers={'User-Agent': 'Mozilla/5.0 SelfPinger/1.0'})
+                with urllib.request.urlopen(req, timeout=15) as res:
                     if res.status == 200:
-                        add_log("🟢 [24/7 KEEP-ALIVE] Render Self-Ping Successful (Server Awake).")
+                        consecutive_fails = 0
+                        add_log(f"🟢 [KEEP-ALIVE] Self-ping OK → {target_url}")
+                    else:
+                        raise Exception(f"HTTP {res.status}")
             except Exception as e:
-                add_log(f"⚠️ [24/7 KEEP-ALIVE] Self-Ping check: {e}")
-        time.sleep(240)
+                consecutive_fails += 1
+                add_log(f"⚠️ [KEEP-ALIVE] Self-ping failed (attempt {consecutive_fails}): {e}")
+        else:
+            # No external URL configured — log once every hour
+            if int(time.time()) % 3600 < 600:
+                add_log("ℹ️ [KEEP-ALIVE] RENDER_EXTERNAL_URL not set — add it in Render Environment to enable auto-ping.")
+        time.sleep(600)  # Ping every 10 minutes (Render spins down after 15min inactivity)
 
 # Start all background workers
 threading.Thread(target=bot_background_loop, daemon=True).start()
