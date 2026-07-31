@@ -1,1 +1,4 @@
-# Standard Python Standard Library deployment
+requests
+aiohttp
+python-dotenv
+

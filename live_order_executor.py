@@ -15,8 +15,11 @@ import logging
 import datetime
 from typing import Optional, Dict, Tuple
 
-from dotenv import load_dotenv
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 # ─── Configuration ─────────────────────────────────────────────────────────────
 DELTA_BASE_URL   = os.getenv("DELTA_BASE_URL",   "https://api.india.delta.exchange")

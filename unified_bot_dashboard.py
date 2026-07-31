@@ -24,9 +24,11 @@ import threading
 import os
 import sys
 import asyncio
-from dotenv import load_dotenv
-
-load_dotenv()
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
 
 # Live Order Executor — loads LIVE_EXECUTION flag from environment
 try:
