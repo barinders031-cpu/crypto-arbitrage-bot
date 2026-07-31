@@ -15,6 +15,9 @@ import logging
 import datetime
 from typing import Optional, Dict, Tuple
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # ─── Configuration ─────────────────────────────────────────────────────────────
 DELTA_BASE_URL   = os.getenv("DELTA_BASE_URL",   "https://api.india.delta.exchange")
 COINDCX_BASE_URL = os.getenv("COINDCX_BASE_URL", "https://api.coindcx.com")
@@ -24,8 +27,8 @@ DELTA_API_SECRET   = os.getenv("DELTA_API_SECRET",   "")
 COINDCX_API_KEY    = os.getenv("COINDCX_API_KEY",    "")
 COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "")
 
-# Master live/paper toggle
-LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "false").strip().lower() == "true"
+# Master live/paper toggle — default TRUE for real money execution
+LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "true").strip().lower() in ("true", "1", "yes")
 
 # Fee Schedule (Inc. 18% GST)
 FEE_TAKER_DELTA_ENTRY   = 0.00059

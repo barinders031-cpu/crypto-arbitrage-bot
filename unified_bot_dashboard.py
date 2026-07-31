@@ -21,10 +21,12 @@ import urllib.parse
 import json
 import datetime
 import threading
-import time
 import os
 import sys
 import asyncio
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # Live Order Executor — loads LIVE_EXECUTION flag from environment
 try:
