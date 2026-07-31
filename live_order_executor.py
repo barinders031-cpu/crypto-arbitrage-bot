@@ -259,7 +259,7 @@ class LiveOrderExecutor:
         }
         if limit_price and order_type == "limit_order":
             order_dict["price"] = limit_price
-        if reduce_only:
+        if reduce_only and order_type == "limit_order":
             order_dict["reduce_only"] = True
 
         payload = {"order": order_dict}
