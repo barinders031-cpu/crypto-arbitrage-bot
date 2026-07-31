@@ -357,9 +357,9 @@ def get_coin_max_leverage(coin):
 def bot_background_loop():
     global paper_history, bot_state
     
-    margin = MARGIN_PER_EXCHANGE_USD  # Read from env (default $10)
+    margin = MARGIN_PER_EXCHANGE_USD  # Fallback for paper mode; overwritten by live balance in LIVE mode
     mode_str = "LIVE REAL-MONEY" if LIVE_EXECUTION else "PAPER VIRTUAL"
-    add_log(f"Funding Engine Initialized — Mode: {mode_str} | Margin: ${margin:.2f}/exchange")
+    add_log(f"Funding Engine Initialized — Mode: {mode_str} | Fallback Margin: ${margin:.2f}/exchange")
     if LIVE_EXECUTION:
         add_log("🔴 LIVE EXECUTION ACTIVE — Real orders will be placed on Delta & CoinDCX!")
     else:
@@ -460,7 +460,7 @@ def bot_background_loop():
                     time.sleep(0.5)
                     continue
 
-            # ── PHASE 2: Fetch Live Real Account Balances & Rates ──
+            # ── PHASE 2: Fetch Live Real Account Balances & Dynamic Margin ──
             if _live_executor:
                 try:
                     _d_bal, _c_bal, _min_margin = run_async(_live_executor.fetch_live_balances())
@@ -469,8 +469,15 @@ def bot_background_loop():
                     bot_state["delta_balance"] = _d_bal
                     bot_state["coindcx_balance"] = _c_bal
                     bot_state["paper_wallet_balance"] = _total_capital
+                    # ✅ KEY FIX: Update margin dynamically each scan cycle
+                    # Uses 75% of the LOWER of the two exchange balances
+                    # so both legs always trade with same quantity and 25% headroom remains
+                    if _min_margin > 0:
+                        margin = _min_margin
+                        bot_state["active_margin_per_exchange"] = f"${margin:.2f}"
+                        add_log(f"💰 BALANCE AUDIT: Delta=${_d_bal:.2f} | CoinDCX=${_c_bal:.2f} | Active Margin=75%×min=${margin:.2f}/exchange")
                 except Exception as _bal_err:
-                    pass
+                    add_log(f"⚠️ Balance fetch error (using last margin ${margin:.2f}): {_bal_err}")
 
             delta_products, delta_tickers = fetch_delta_data()
 

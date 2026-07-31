@@ -181,8 +181,8 @@ class LiveOrderExecutor:
         if c_bal < 1.0:
             c_bal = 9.31 
 
-        # Minimum Balance Equalizer Rule: Use 90% of lower balance as safe margin
-        min_margin = min(d_bal, c_bal) * 0.90
+        # 75% of lower balance = safe execution margin (leaves 25% headroom for fees/slippage)
+        min_margin = min(d_bal, c_bal) * 0.75
         logger.info(f"💰 LIVE BALANCE AUDIT: Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f} | Effective Safe Margin=${min_margin:.2f}")
         return d_bal, c_bal, min_margin
 
