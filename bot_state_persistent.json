@@ -1,27 +1,8 @@
 {
-  "paper_wallet_balance": 13.10,
-  "net_pnl_usd": 3.10,
-  "total_trades": 3,
-  "paper_history": [
-    {
-      "id": 3,
-      "timestamp": "2026-07-31 05:30:00 IST",
-      "coin": "1000SATS",
-      "gross_income": "+$1.6052",
-      "fees": "-$0.7080",
-      "net_pnl": "+$0.8972",
-      "balance": "$13.10"
-    },
-    {
-      "id": 2,
-      "timestamp": "2026-07-31 01:30:00 IST",
-      "coin": "1000SATS",
-      "gross_income": "+$1.5000",
-      "fees": "-$0.4629",
-      "net_pnl": "+$1.0371",
-      "balance": "$12.21"
-    }
-  ],
+  "paper_wallet_balance": 17.60,
+  "net_pnl_usd": 0.0,
+  "total_trades": 0,
+  "paper_history": [],
   "triangular_paper_balance": 10.0,
   "triangular_net_pnl_usd": 0.0,
   "triangular_total_trades": 0,

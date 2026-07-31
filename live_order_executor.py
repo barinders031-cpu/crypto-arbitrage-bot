@@ -22,10 +22,10 @@ load_dotenv()
 DELTA_BASE_URL   = os.getenv("DELTA_BASE_URL",   "https://api.india.delta.exchange")
 COINDCX_BASE_URL = os.getenv("COINDCX_BASE_URL", "https://api.coindcx.com")
 
-DELTA_API_KEY      = os.getenv("DELTA_API_KEY",      "")
-DELTA_API_SECRET   = os.getenv("DELTA_API_SECRET",   "")
-COINDCX_API_KEY    = os.getenv("COINDCX_API_KEY",    "")
-COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "")
+DELTA_API_KEY      = os.getenv("DELTA_API_KEY",      "yCqLDRMdsn4Qj6360pWRaCm4xczCSO")
+DELTA_API_SECRET   = os.getenv("DELTA_API_SECRET",   "kBBM2bfGMjiUj1LWXQVnD6vo0aM0L9sj6CD0VtSbNoG7pnC8dXI3Lft7VXaA")
+COINDCX_API_KEY    = os.getenv("COINDCX_API_KEY",    "7477abd8ac13ed63610c41787806c7fd8d31b64fb8efa719")
+COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "3cde4b6b16d071a8156decee692f2f73c6de074e991097d73872495c80fe0cb5")
 
 # Master live/paper toggle — default TRUE for real money execution
 LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "true").strip().lower() in ("true", "1", "yes")
