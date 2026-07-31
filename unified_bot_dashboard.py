@@ -1325,12 +1325,20 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 <p>Cross-Exchange Funding Rates & Binance Dynamic All-BTC Pairs Triangular Arbitrage</p>
             </div>
 
-            <div class="telegram-widget">
-                <span style="font-size: 12px; color: var(--text-muted);">Telegram Alerts:</span>
-                <input type="text" id="tg-token" placeholder="Bot Token">
-                <input type="text" id="tg-chat" placeholder="Chat ID">
-                <button class="btn-tg" onclick="saveTelegram()">Save & Link</button>
-                <span id="val-tg-status" style="font-size: 11px; margin-left: 5px; font-weight: 600;" class="text-cyan">Checking...</span>
+            <div style="display: flex; gap: 10px; align-items: center;">
+                <div class="telegram-widget">
+                    <span style="font-size: 12px; color: var(--text-muted);">CoinDCX Bal ($):</span>
+                    <input type="number" id="input-coindcx-bal" placeholder="e.g. 15.00" step="0.5" style="width: 80px;">
+                    <button class="btn-tg" onclick="saveCoinDCXBal()">Set</button>
+                </div>
+
+                <div class="telegram-widget">
+                    <span style="font-size: 12px; color: var(--text-muted);">Telegram Alerts:</span>
+                    <input type="text" id="tg-token" placeholder="Bot Token">
+                    <input type="text" id="tg-chat" placeholder="Chat ID">
+                    <button class="btn-tg" onclick="saveTelegram()">Save & Link</button>
+                    <span id="val-tg-status" style="font-size: 11px; margin-left: 5px; font-weight: 600;" class="text-cyan">Checking...</span>
+                </div>
             </div>
         </div>
 
@@ -1666,6 +1674,26 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             }
         }
 
+        async function saveCoinDCXBal() {
+            const val = parseFloat(document.getElementById('input-coindcx-bal').value);
+            if (isNaN(val) || val <= 0) {
+                alert("Please enter a valid CoinDCX balance amount in USD (e.g., 15.00)");
+                return;
+            }
+            try {
+                const res = await fetch('/api/balance', {
+                    method: 'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({coindcx_balance: val})
+                });
+                const data = await res.json();
+                alert("✅ CoinDCX Balance updated to $" + val.toFixed(2) + " USD!");
+                updateDashboard();
+            } catch (e) {
+                alert("Error saving balance: " + e);
+            }
+        }
+
         setInterval(updateDashboard, 2000);
         updateDashboard();
     </script>
@@ -1741,8 +1769,28 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             if chat_id:
                 self.wfile.write(json.dumps({"status": "ok", "chat_id": chat_id}).encode('utf-8'))
                 send_telegram_alert("🔔 *Telegram Trade Notification Successfully Linked to Multi-Engine Dashboard!*")
-            else:
-                self.wfile.write(json.dumps({"status": "need_message", "message": "Please send 1 message to your bot on Telegram, then try again!"}).encode('utf-8'))
+        elif self.path == '/api/balance':
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length)
+            data = json.loads(post_data.decode('utf-8'))
+
+            coindcx_bal = data.get('coindcx_balance')
+            if coindcx_bal is not None:
+                try:
+                    val = float(coindcx_bal)
+                    os.environ["COINDCX_OVERRIDE_BALANCE"] = str(val)
+                    if _live_executor:
+                        _live_executor._last_c_bal = val
+                    bot_state["coindcx_balance"] = val
+                    add_log(f"⚙️ [USER OVERRIDE] CoinDCX Futures Balance set to ${val:.2f} USD")
+                except ValueError:
+                    pass
+
+            self.send_response(200)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "ok", "coindcx_balance": os.getenv("COINDCX_OVERRIDE_BALANCE")}).encode('utf-8'))
+            return
 
     def log_message(self, format, *args):
         return
