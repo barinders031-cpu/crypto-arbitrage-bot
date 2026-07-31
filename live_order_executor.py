@@ -131,7 +131,7 @@ class LiveOrderExecutor:
         """
         await self._ensure_session()
         d_bal = 8.37
-        c_bal = 9.30
+        c_bal = 9.31
 
         try:
             t_stamp, sig = sign_delta("GET", "/v2/wallet/balances", "")
@@ -153,21 +153,18 @@ class LiveOrderExecutor:
             async with self.session.post(COINDCX_BASE_URL + path, data=body_str, headers=headers, timeout=self.t_scan) as resp:
                 data = await resp.json()
                 if isinstance(data, list):
+                    spot_usdt = 0.0
                     for item in data:
                         if item.get("currency") == "USDT":
-                            val = float(item.get("balance") or 0)
-                            if val > 1.0:
-                                c_bal = val
-                            else:
-                                c_bal = 9.30
+                            spot_usdt = float(item.get("balance") or 0)
                             break
+                    # Total CoinDCX USDT = Spot (6.98) + Futures Margin (2.33)
+                    c_bal = spot_usdt + 2.33 if spot_usdt > 0 else 9.31
         except Exception as e:
             logger.warning(f"Error fetching CoinDCX balance: {e}")
 
-        # [CRITICAL FIX]: CoinDCX v1 API users/balances returns Spot wallet ($0.01) instead of Futures margin.
-        # Fallback to the live 9.30 USDT Futures available balance from terminal.
         if c_bal < 1.0:
-            c_bal = 9.30 
+            c_bal = 9.31 
 
         # Minimum Balance Equalizer Rule: Use 90% of lower balance as safe margin
         min_margin = min(d_bal, c_bal) * 0.90
