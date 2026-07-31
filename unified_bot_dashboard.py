@@ -626,15 +626,28 @@ def bot_background_loop():
                                 notional_usd    = actual_notional,
                                 gross_spread_pct= diff,
                             ))
-                            if entry_result["status"] in ("SUCCESS_LIVE", "PAPER"):
+                            st = entry_result.get("status")
+                            if st in ("SUCCESS_LIVE", "PAPER"):
                                 live_entry_success = True
                                 add_log(f"   ✅ Entry filled: Delta order_id={entry_result.get('delta_order_id')} | CoinDCX order_id={entry_result.get('coindcx_order_id')} | Latency={entry_result.get('latency_ms', 0):.0f}ms")
-                            elif entry_result["status"] == "ABORTED_SLIPPAGE":
-                                add_log(f"   ⛔ Entry ABORTED — Slippage too high (D={entry_result.get('slip_delta',0):.4f}% C={entry_result.get('slip_coindcx',0):.4f}%)")
+                            elif st == "ABORTED_SPREAD_GATE":
+                                add_log(f"   ⛔ Entry ABORTED — {entry_result.get('reason')}")
                                 executed_windows.add(funding_window_key)
-                                continue  # Skip this window
+                                continue
+                            elif st == "ABORTED_FUNDING_COLLAPSE":
+                                add_log(f"   ⛔ Entry ABORTED — Funding rate collapsed before T-0s (Current={entry_result.get('current_spread',0):.4f}%)")
+                                executed_windows.add(funding_window_key)
+                                continue
+                            elif st == "ABORTED_HEALTH_CHECK":
+                                add_log(f"   ⛔ Entry ABORTED — Pre-flight health check failed ({entry_result.get('reason')})")
+                                executed_windows.add(funding_window_key)
+                                continue
+                            elif st in ("DELTA_FAILED_EMERGENCY_CLOSED", "COINDCX_FAILED_EMERGENCY_CLOSED"):
+                                add_log(f"   🚨 EMERGENCY ROLLBACK TRIGGERED — One leg failed to fill, opposite leg closed in <500ms to preserve neutrality.")
+                                executed_windows.add(funding_window_key)
+                                continue
                             else:
-                                add_log(f"   ❌ Entry FAILED: {entry_result['status']}")
+                                add_log(f"   ❌ Entry FAILED: {st}")
                         except Exception as _ex:
                             add_log(f"   ❌ Live entry exception: {_ex}")
                     else:
