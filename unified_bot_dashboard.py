@@ -436,7 +436,17 @@ def bot_background_loop():
                     time.sleep(0.5)
                     continue
 
-            # ── PHASE 2: Fetch Live Rates ──
+            # ── PHASE 2: Fetch Live Real Account Balances & Rates ──
+            if _live_executor:
+                try:
+                    _d_bal, _c_bal, _tot_bal = asyncio.run(_live_executor.fetch_live_balances())
+                    bot_state["real_balance_display"] = f"Delta: ${_d_bal:.2f} | CoinDCX: ${_c_bal:.2f} | Total: ${_tot_bal:.2f}"
+                    bot_state["delta_balance"] = _d_bal
+                    bot_state["coindcx_balance"] = _c_bal
+                    bot_state["paper_wallet_balance"] = _tot_bal
+                except Exception as _bal_err:
+                    pass
+
             delta_products, delta_tickers = fetch_delta_data()
 
             delta_interval = {}
@@ -1500,7 +1510,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 if (!data || !data.state) return;
 
                 // --- UPDATE ENGINE 1: FUNDING ARBITRAGE ---
-                document.getElementById('val-balance').innerText = '$' + (data.state.paper_wallet_balance || 10.0).toFixed(2);
+                document.getElementById('val-balance').innerText = data.state.real_balance_display || ('$' + (data.state.paper_wallet_balance || 10.0).toFixed(2));
                 const pnl = data.state.net_pnl_usd || 0.0;
                 const pnlEl = document.getElementById('val-pnl');
                 pnlEl.innerText = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(4);
