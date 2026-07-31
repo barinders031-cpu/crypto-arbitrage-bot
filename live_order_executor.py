@@ -109,8 +109,10 @@ class LiveOrderExecutor:
     def __init__(self):
         self.live = LIVE_EXECUTION
         self.session: Optional[aiohttp.ClientSession] = None
-        self.t_order = aiohttp.ClientTimeout(total=4, connect=1.5, sock_read=2.5)
-        self.t_scan  = aiohttp.ClientTimeout(total=5, connect=2.0, sock_read=3.5)
+        self.t_order = aiohttp.ClientTimeout(total=8,  connect=3.0, sock_read=6.0)
+        self.t_scan  = aiohttp.ClientTimeout(total=15, connect=5.0, sock_read=12.0)
+        # Separate longer timeout for balance fetches (India-exchange APIs from US Render servers)
+        self.t_balance = aiohttp.ClientTimeout(total=20, connect=5.0, sock_read=15.0)
 
         mode = "LIVE REAL-MONEY 🔴" if self.live else "PAPER SIMULATION 📄"
         logger.info(f"LiveOrderExecutor v5.1 Initialized | Mode: {mode}")
@@ -143,29 +145,36 @@ class LiveOrderExecutor:
         """
         Fetches live margin balance on both Delta and CoinDCX.
         Returns: (delta_usd, coindcx_usdt, min_effective_margin)
+        Uses longer t_balance timeout (20s) to handle India-exchange APIs from Render US servers.
         """
         await self._ensure_session()
-        d_bal = 8.37
-        c_bal = 9.31
+        # Start with last known good values (overwritten if fetch succeeds)
+        d_bal = getattr(self, '_last_d_bal', 8.37)
+        c_bal = getattr(self, '_last_c_bal', 9.31)
 
+        # ── Delta Balance ──
         try:
             t_stamp, sig = sign_delta("GET", "/v2/wallet/balances", "")
             headers = {"api-key": DELTA_API_KEY, "timestamp": t_stamp, "signature": sig, "User-Agent": "Mozilla/5.0"}
-            async with self.session.get(DELTA_BASE_URL + "/v2/wallet/balances", headers=headers, timeout=self.t_scan) as resp:
+            async with self.session.get(DELTA_BASE_URL + "/v2/wallet/balances", headers=headers, timeout=self.t_balance) as resp:
                 data = await resp.json()
                 for b in data.get("result", []):
                     if b.get("asset_symbol") == "USD":
-                        d_bal = float(b.get("balance") or 8.37)
+                        fetched = float(b.get("balance") or 0)
+                        if fetched > 0:
+                            d_bal = fetched
+                            self._last_d_bal = d_bal
                         break
         except Exception as e:
-            logger.warning(f"Error fetching Delta balance: {e}")
+            logger.warning(f"Error fetching Delta balance: {e} — using last known ${d_bal:.2f}")
 
+        # ── CoinDCX Balance (Spot USDT + Futures Margin) ──
         try:
             path = "/exchange/v1/users/balances"
             payload = {}
             body_str, sig = sign_coindcx(payload)
             headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": sig}
-            async with self.session.post(COINDCX_BASE_URL + path, data=body_str, headers=headers, timeout=self.t_scan) as resp:
+            async with self.session.post(COINDCX_BASE_URL + path, data=body_str, headers=headers, timeout=self.t_balance) as resp:
                 data = await resp.json()
                 if isinstance(data, list):
                     spot_usdt = 0.0
@@ -173,17 +182,33 @@ class LiveOrderExecutor:
                         if item.get("currency") == "USDT":
                             spot_usdt = float(item.get("balance") or 0)
                             break
-                    # Total CoinDCX USDT = Spot (6.98) + Futures Margin (2.33)
-                    c_bal = spot_usdt + 2.33 if spot_usdt > 0 else 9.31
+                    if spot_usdt > 0:
+                        c_bal = spot_usdt
+                        self._last_c_bal = c_bal
         except Exception as e:
-            logger.warning(f"Error fetching CoinDCX balance: {e}")
+            logger.warning(f"Error fetching CoinDCX balance: {e} — using last known ${c_bal:.2f}")
+
+        # ── Futures margin on CoinDCX (secondary endpoint, adds to spot) ──
+        try:
+            fut_path = "/exchange/v1/derivatives/futures/account"
+            fut_payload = {}
+            fut_body, fut_sig = sign_coindcx(fut_payload)
+            fut_headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": fut_sig}
+            async with self.session.post(COINDCX_BASE_URL + fut_path, data=fut_body, headers=fut_headers, timeout=self.t_balance) as resp2:
+                fut_data = await resp2.json()
+                fut_margin = float((fut_data.get("margin_balance") or fut_data.get("available_margin") or 0))
+                if fut_margin > 0:
+                    c_bal = c_bal + fut_margin
+                    self._last_c_bal = c_bal
+        except Exception:
+            pass  # Futures margin endpoint optional — spot balance sufficient
 
         if c_bal < 1.0:
-            c_bal = 9.31 
+            c_bal = getattr(self, '_last_c_bal', 9.31)
 
         # 75% of lower balance = safe execution margin (leaves 25% headroom for fees/slippage)
         min_margin = min(d_bal, c_bal) * 0.75
-        logger.info(f"💰 LIVE BALANCE AUDIT: Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f} | Effective Safe Margin=${min_margin:.2f}")
+        logger.info(f"💰 LIVE BALANCE AUDIT: Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f} | Effective Safe Margin (75%)=${min_margin:.2f}")
         return d_bal, c_bal, min_margin
 
     async def _delta_get(self, path: str) -> Dict:
