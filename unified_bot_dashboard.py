@@ -2,6 +2,7 @@
 Unified Multi-Engine Arbitrage Platform
 =========================================
 Engine 1: Cross-Exchange Perpetual Funding Rate Arbitrage (Delta Exchange India vs CoinDCX / Binance)
+           >> Full Live Automation: set LIVE_EXECUTION=true in env to place REAL orders on both exchanges.
 Engine 2: Binance Dynamic All-BTC-Coins Triangular Arbitrage Engine ($10 Paper Trading Wallet & Live Telegram Feed)
 
 Features:
@@ -10,6 +11,7 @@ Features:
 3. Real-time L2 Order Book Depth Walk (Top 10 Levels) for VWAP Slippage Calculation.
 4. $10 Virtual Paper Balance with Real-time PnL tracking & Telegram Alerts.
 5. Render 24/7 Keep-Alive Self-Ping Module.
+6. Full Live Order Execution via LiveOrderExecutor (asyncio dual-leg, slippage gate, emergency close).
 """
 
 import http.server
@@ -22,6 +24,16 @@ import threading
 import time
 import os
 import sys
+import asyncio
+
+# Live Order Executor — loads LIVE_EXECUTION flag from environment
+try:
+    from live_order_executor import get_executor, calculate_sizing, LIVE_EXECUTION, TOTAL_ROUNDTRIP_FEE_PCT as _LIVE_FEE_PCT
+    _live_executor = get_executor()
+except Exception as _live_import_err:
+    print(f"[WARNING] live_order_executor import failed: {_live_import_err}. Running in paper mode.")
+    LIVE_EXECUTION = False
+    _live_executor = None
 
 # Enforce UTF-8 encoding for Windows terminal compatibility
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
@@ -40,9 +52,13 @@ paper_history = []
 triangular_logs = []
 triangular_history = []
 
+# Live execution config from environment
+MARGIN_PER_EXCHANGE_USD = float(os.getenv("MARGIN_PER_EXCHANGE_USD", "10"))
+
 bot_state = {
     # Engine 1: Cross-Exchange Funding
     "status": "DUAL-LEG SAFEGUARD ACTIVE",
+    "live_mode": "LIVE 🔴" if LIVE_EXECUTION else "PAPER 📄",
     "paper_wallet_balance": 10.0,
     "total_trades": 0,
     "net_pnl_usd": 0.0,
@@ -261,8 +277,13 @@ def get_coin_max_leverage(coin):
 def bot_background_loop():
     global paper_history, bot_state
     
-    add_log("Funding Engine Initialized with Dynamic Exchange Leverage & Fee Guard.")
-    margin = 10.0  # $10 Margin per exchange
+    margin = MARGIN_PER_EXCHANGE_USD  # Read from env (default $10)
+    mode_str = "LIVE REAL-MONEY" if LIVE_EXECUTION else "PAPER VIRTUAL"
+    add_log(f"Funding Engine Initialized — Mode: {mode_str} | Margin: ${margin:.2f}/exchange")
+    if LIVE_EXECUTION:
+        add_log("🔴 LIVE EXECUTION ACTIVE — Real orders will be placed on Delta & CoinDCX!")
+    else:
+        add_log("📄 Paper mode — set LIVE_EXECUTION=true in env to enable real order placement.")
 
     executed_windows = set()
     pending_exit = None
@@ -278,19 +299,48 @@ def bot_background_loop():
             creds = get_telegram_config()
             bot_state["telegram_status"] = "Active 🟢" if creds.get("enabled") and creds.get("bot_token") else "Not Configured ⚪"
 
-            # ── PHASE 1: Scalper Exit Check ──
+            # ── PHASE 1: Scalper Exit Check (T+2s after funding) ──
             if pending_exit:
                 pe = pending_exit
                 secs_after_funding = (now_utc - pe["funding_ts_utc"]).total_seconds()
                 if secs_after_funding >= 2.0:
                     coin    = pe["coin"]
                     top     = pe["top"]
-                    gross   = pe["gross_funding"]
-                    fee     = pe["coin_fee"]
-                    net     = pe["net_pnl"]
                     lev     = pe["coin_lev"]
                     notl    = pe["coin_notional"]
                     diff    = pe["diff"]
+
+                    # ── Live Exit ──────────────────────────────────────
+                    if LIVE_EXECUTION and _live_executor and pe.get("live_entry_success"):
+                        try:
+                            exit_result = asyncio.run(_live_executor.execute_exit(
+                                delta_sym       = pe["delta_sym"],
+                                delta_side      = pe["delta_side"],
+                                delta_lots      = pe["delta_lots"],
+                                coindcx_sym     = pe["coindcx_sym"],
+                                coindcx_side    = pe["coindcx_side"],
+                                exact_qty       = pe["exact_qty"],
+                                leverage        = int(lev),
+                                notional_usd    = notl,
+                                gross_spread_pct= diff,
+                                trigger_reason  = f"Scalper Exit T+{secs_after_funding:.1f}s",
+                            ))
+                            net   = exit_result.get("net_pnl_usd", pe["net_pnl"])
+                            gross = exit_result.get("gross_usd",   pe["gross_funding"])
+                            fee   = exit_result.get("fees_usd",    pe["coin_fee"])
+                            live_tag = "🔴 LIVE"
+                        except Exception as _ex:
+                            add_log(f"❌ Live exit error: {_ex} — falling back to paper PnL")
+                            net   = pe["net_pnl"]
+                            gross = pe["gross_funding"]
+                            fee   = pe["coin_fee"]
+                            live_tag = "📄 PAPER (exit err)"
+                    else:
+                        # ── Paper Exit ─────────────────────────────────
+                        net   = pe["net_pnl"]
+                        gross = pe["gross_funding"]
+                        fee   = pe["coin_fee"]
+                        live_tag = "📄 PAPER"
 
                     bot_state["paper_wallet_balance"] += net
                     bot_state["net_pnl_usd"]          += net
@@ -308,20 +358,20 @@ def bot_background_loop():
                     paper_history.insert(0, trade_entry)
                     save_persistent_state()
 
-                    add_log(f"⚡ [SCALPER EXIT T+{secs_after_funding:.1f}s] Neutral Exit fired for {coin} (0% Delta Exit Fee Waiver).")
-                    add_log(f"✅ {lev:.0f}X TRADE COMPLETE ({coin}): Gross +${gross:.4f} | Fees -${fee:.4f} | NET +${net:.4f} USD")
+                    add_log(f"⚡ [{live_tag} EXIT T+{secs_after_funding:.1f}s] {coin} | Gross +${gross:.4f} | Fees -${fee:.4f} | NET +${net:.4f}")
 
                     tg_msg = (
                         f"🚨 *PRECISION TIMED ARBITRAGE COMPLETE* 🚀\n\n"
                         f"🪙 *Coin:* `{coin}`\n"
                         f"📊 *Strategy:* `{top['action']}`\n"
                         f"⏱️ *Timing:* `Entry T-1min → Snapshot T+0s → Scalper Exit T+{secs_after_funding:.1f}s`\n"
-                        f"⚙️ *Margin & Leverage:* `$10.00 @ {lev:.0f}x (${notl:.0f} Notional/leg)`\n"
-                        f"⚡ *Spread:* `{diff:.4f}%`\n\n"
+                        f"⚙️ *Margin & Leverage:* `${margin:.2f} @ {lev:.0f}x (${notl:.0f} Notional/leg)`\n"
+                        f"⚡ *Spread:* `{diff:.4f}%`\n"
+                        f"🏷️ *Mode:* `{live_tag}`\n\n"
                         f"💵 *Gross Funding:* `+${gross:.4f} USD`\n"
                         f"🏷️ *Roundtrip Fees:* `-${fee:.4f} USD`\n"
                         f"📈 *NET CASH PROFIT:* `+${net:.4f} USD`\n"
-                        f"💰 *New Virtual Balance:* `${bot_state['paper_wallet_balance']:.2f} USD`"
+                        f"💰 *New Balance:* `${bot_state['paper_wallet_balance']:.2f} USD`"
                     )
                     send_telegram_alert(tg_msg)
                     pending_exit = None
@@ -483,15 +533,60 @@ def bot_background_loop():
 
             if is_entry_window and not already_executed:
                 if net_pnl > 0:
-                    add_log(f"⚡ [ENTRY T-{secs}s] Entry FIRED for {coin} ({coin_lev:.0f}x | Notional ${coin_notional:.0f})")
+                    # ── Determine exact lots & quantities via sizing protocol ──
+                    delta_sym    = top.get('delta_sym', f"{coin}USD")
+                    cdcx_sym     = top.get('cdcx_sym',  f"B-{coin}_USDT")
+                    delta_action = top.get('action', '')
+                    delta_side   = "sell" if "SHORT Delta" in delta_action else "buy"
+                    cdcx_side    = "buy"  if "LONG CoinDCX" in delta_action else "sell"
+                    mark_price   = float(top.get('delta_mark') or top.get('cdcx_mark') or 1.0)
+
+                    # Universal Base Asset Quantity Sizing (AGENTS.md Rule 8)
+                    from live_order_executor import calculate_sizing as _cs
+                    lots, exact_qty, actual_notional = _cs(coin, mark_price, coin_notional)
+
+                    add_log(f"⚡ [ENTRY T-{secs}s] {'🔴 LIVE' if LIVE_EXECUTION else '📄 PAPER'} — {coin} {delta_side.upper()} {lots}Lots | CoinDCX {cdcx_side.upper()} {exact_qty} | ${actual_notional:.2f} notional")
                     add_log(f"   Delta: {top['delta_rate']} | CoinDCX: {top['cdcx_rate']} | Spread: {diff:.4f}%")
-                    add_log(f"   Gross Funding: +${gross_funding:.4f} | Fees: -${coin_fee:.4f} | NET: +${net_pnl:.4f}")
+
+                    # ── Live Entry ──────────────────────────────────────────
+                    live_entry_success = False
+                    if LIVE_EXECUTION and _live_executor:
+                        try:
+                            entry_result = asyncio.run(_live_executor.execute_entry(
+                                delta_sym       = delta_sym,
+                                delta_side      = delta_side,
+                                delta_lots      = lots,
+                                coindcx_sym     = cdcx_sym,
+                                coindcx_side    = cdcx_side,
+                                exact_qty       = exact_qty,
+                                leverage        = int(coin_lev),
+                                coin            = coin,
+                                mark_delta      = mark_price,
+                                mark_coindcx    = float(top.get('cdcx_mark') or mark_price),
+                                notional_usd    = actual_notional,
+                                gross_spread_pct= diff,
+                            ))
+                            if entry_result["status"] in ("SUCCESS_LIVE", "PAPER"):
+                                live_entry_success = True
+                                add_log(f"   ✅ Entry filled: Delta order_id={entry_result.get('delta_order_id')} | CoinDCX order_id={entry_result.get('coindcx_order_id')} | Latency={entry_result.get('latency_ms', 0):.0f}ms")
+                            elif entry_result["status"] == "ABORTED_SLIPPAGE":
+                                add_log(f"   ⛔ Entry ABORTED — Slippage too high (D={entry_result.get('slip_delta',0):.4f}% C={entry_result.get('slip_coindcx',0):.4f}%)")
+                                executed_windows.add(funding_window_key)
+                                continue  # Skip this window
+                            else:
+                                add_log(f"   ❌ Entry FAILED: {entry_result['status']}")
+                        except Exception as _ex:
+                            add_log(f"   ❌ Live entry exception: {_ex}")
+                    else:
+                        live_entry_success = False  # Paper mode
 
                     tg_entry = (
                         f"⚡ *ENTRY FIRED — T-{secs}s BEFORE FUNDING*\n\n"
                         f"🪙 *Coin:* `{coin}`\n"
                         f"📊 *Strategy:* `{top['action']}`\n"
-                        f"⚙️ *Leverage:* `{coin_lev:.0f}x | ${coin_notional:.0f} Notional/leg`\n"
+                        f"🏷️ *Mode:* `{'🔴 LIVE REAL-MONEY' if LIVE_EXECUTION else '📄 Paper Virtual'}`\n"
+                        f"⚙️ *Leverage:* `{coin_lev:.0f}x | ${actual_notional:.0f} Notional/leg`\n"
+                        f"📦 *Sizing:* `{lots} Lots Delta | {exact_qty} {coin} CoinDCX`\n"
                         f"⚡ *Spread:* `{diff:.4f}%`\n"
                         f"🕐 *Funding in:* `{secs}s`\n\n"
                         f"💵 *Expected Gross:* `+${gross_funding:.4f}`\n"
@@ -508,10 +603,19 @@ def bot_background_loop():
                         "coin_fee":      coin_fee,
                         "net_pnl":       net_pnl,
                         "coin_lev":      coin_lev,
-                        "coin_notional": coin_notional,
+                        "coin_notional": actual_notional,
                         "diff":          diff,
                         "funding_ts_utc": funding_ts_utc,
                         "entry_time":    now_utc,
+                        # Live order metadata
+                        "live_entry_success": live_entry_success,
+                        "delta_sym":     delta_sym,
+                        "cdcx_sym":      cdcx_sym,
+                        "coindcx_sym":   cdcx_sym,
+                        "delta_side":    delta_side,
+                        "coindcx_side":  cdcx_side,
+                        "delta_lots":    lots,
+                        "exact_qty":     exact_qty,
                     }
                 else:
                     add_log(f"⚠️ [{coin} T-{secs}s] SKIP — Net PnL (${net_pnl:.4f}) negative after fees.")
@@ -1107,7 +1211,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
         <div class="grid-4">
             <div class="card">
-                <div class="card-label">Virtual Margin Balance</div>
+                <div class="card-label">Account Balance</div>
                 <div class="card-val text-green" id="val-balance">$10.00</div>
             </div>
             <div class="card">
@@ -1119,6 +1223,12 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 <div class="card-val text-cyan" id="val-diff">0.0000%</div>
             </div>
             <div class="card">
+                <div class="card-label">Execution Mode</div>
+                <div class="card-val" id="val-live-mode" style="font-size: 15px; margin-top: 5px; color: #ff4d4d;">PAPER 📄</div>
+            </div>
+        </div>
+        <div class="grid-4" style="margin-top: 0;">
+            <div class="card" style="grid-column: span 2;">
                 <div class="card-label">Next Settlement Countdown</div>
                 <div class="card-val text-yellow" id="val-countdown" style="font-size: 16px; margin-top: 5px;">Calculating...</div>
             </div>
@@ -1317,6 +1427,13 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
                 const diffEl = document.getElementById('val-diff');
                 if (diffEl) diffEl.innerText = data.state.active_funding_diff || '0.0000%';
+
+                const liveModeEl = document.getElementById('val-live-mode');
+                if (liveModeEl) {
+                    const lm = data.state.live_mode || 'PAPER 📄';
+                    liveModeEl.innerText = lm;
+                    liveModeEl.style.color = lm.includes('LIVE') ? '#ff4d4d' : '#aaaaaa';
+                }
 
                 document.getElementById('val-scan-time').innerText = 'Last Scan: ' + (data.state.last_scan_time || 'Just Now');
                 document.getElementById('val-countdown').innerText = data.state.next_funding_countdown || 'Calculating...';
