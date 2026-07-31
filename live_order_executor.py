@@ -1,4 +1,4 @@
-﻿"""
+"""
 Live Order Executor v5.1 — Universal 4-Scenario SOR & Dynamic Balance Equalizer
 ================================================================================
 Handles all real-world orderbook spread conditions + dynamic minimum balance auto-sizing.
@@ -250,7 +250,7 @@ class LiveOrderExecutor:
     ) -> Dict:
         """CoinDCX Order Placement."""
         path    = "/exchange/v1/derivatives/futures/orders/create"
-        payload = {
+        order_dict = {
             "pair":           symbol,
             "side":           side.lower(),
             "order_type":     order_type,
@@ -258,10 +258,11 @@ class LiveOrderExecutor:
             "leverage":       leverage,
         }
         if limit_price and order_type == "limit_order":
-            payload["price"] = limit_price
+            order_dict["price"] = limit_price
         if reduce_only:
-            payload["reduce_only"] = True
+            order_dict["reduce_only"] = True
 
+        payload = {"order": order_dict}
         body_str, sig = sign_coindcx(payload)
         headers = {
             "Content-Type":    "application/json",
