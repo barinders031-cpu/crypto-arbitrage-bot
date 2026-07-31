@@ -262,14 +262,70 @@ def add_triangular_log(msg):
     if len(triangular_logs) > 100:
         triangular_logs.pop(0)
 
-def get_coin_max_leverage(coin):
+
+# ── Per-exchange max leverage tables (based on actual exchange limits) ──────────
+# Delta Exchange India — perpetual max leverage per coin
+DELTA_MAX_LEVERAGE = {
+    "BTC":     100.0,
+    "ETH":     100.0,
+    "SOL":      50.0,
+    "XRP":      50.0,
+    "DOGE":     50.0,
+    "BNB":      50.0,
+    "1000SATS": 50.0,
+    "ADA":      50.0,
+    "AVAX":     50.0,
+    "LINK":     50.0,
+    "NEAR":     50.0,
+    "SUI":      50.0,
+    "PEPE":     50.0,
+    "SHIB":     50.0,
+    "WIF":      50.0,
+    # Default for all other altcoins on Delta
+    "_DEFAULT": 20.0,
+}
+
+# CoinDCX (Binance-backed) — perpetual max leverage per coin
+COINDCX_MAX_LEVERAGE = {
+    "BTC":     125.0,
+    "ETH":     100.0,
+    "SOL":      50.0,
+    "XRP":      50.0,
+    "DOGE":     50.0,
+    "BNB":      75.0,
+    "1000SATS": 20.0,
+    "ADA":      75.0,
+    "AVAX":     50.0,
+    "LINK":     50.0,
+    "NEAR":     50.0,
+    "SUI":      50.0,
+    "PEPE":     50.0,
+    "SHIB":     50.0,
+    "WIF":      50.0,
+    # Default for all other altcoins on CoinDCX/Binance
+    "_DEFAULT": 20.0,
+}
+
+def get_symmetric_leverage(coin: str) -> float:
+    """
+    Returns the SYMMETRIC (safe) leverage for both exchanges.
+
+    Rule: Both legs MUST use the SAME leverage — always the MINIMUM of the
+    two exchange max leverages. This guarantees exact notional matching and
+    eliminates any margin imbalance between the two legs.
+
+    Example: Delta max = 100x, CoinDCX max = 20x → Both sides use 20x.
+    """
     c = coin.upper()
-    if c in ['BTC', 'ETH']:
-        return 100.0
-    elif c in ['SOL', 'XRP', 'DOGE', 'BNB', '1000SATS', 'ADA', 'AVAX', 'LINK', 'NEAR', 'SUI', 'PEPE', 'SHIB', 'WIF']:
-        return 50.0
-    else:
-        return 20.0
+    delta_lev  = DELTA_MAX_LEVERAGE.get(c, DELTA_MAX_LEVERAGE["_DEFAULT"])
+    cdcx_lev   = COINDCX_MAX_LEVERAGE.get(c, COINDCX_MAX_LEVERAGE["_DEFAULT"])
+    effective  = min(delta_lev, cdcx_lev)
+    return effective
+
+# Legacy alias — kept for backward compatibility
+def get_coin_max_leverage(coin):
+    return get_symmetric_leverage(coin)
+
 
 # ==============================================================================
 # ENGINE 1: CROSS-EXCHANGE FUNDING RATE ARBITRAGE LOOP
@@ -545,7 +601,11 @@ def bot_background_loop():
                     from live_order_executor import calculate_sizing as _cs
                     lots, exact_qty, actual_notional = _cs(coin, mark_price, coin_notional)
 
+                    # Log symmetric leverage breakdown
+                    _d_lev = DELTA_MAX_LEVERAGE.get(coin.upper(), DELTA_MAX_LEVERAGE["_DEFAULT"])
+                    _c_lev = COINDCX_MAX_LEVERAGE.get(coin.upper(), COINDCX_MAX_LEVERAGE["_DEFAULT"])
                     add_log(f"⚡ [ENTRY T-{secs}s] {'🔴 LIVE' if LIVE_EXECUTION else '📄 PAPER'} — {coin} {delta_side.upper()} {lots}Lots | CoinDCX {cdcx_side.upper()} {exact_qty} | ${actual_notional:.2f} notional")
+                    add_log(f"   Leverage: Delta_max={_d_lev:.0f}x | CoinDCX_max={_c_lev:.0f}x → Effective SYMMETRIC={coin_lev:.0f}x (both legs)")
                     add_log(f"   Delta: {top['delta_rate']} | CoinDCX: {top['cdcx_rate']} | Spread: {diff:.4f}%")
 
                     # ── Live Entry ──────────────────────────────────────────

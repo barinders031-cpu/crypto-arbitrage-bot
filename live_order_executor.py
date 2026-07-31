@@ -1,4 +1,4 @@
-﻿"""
+"""
 Live Order Executor - Funding Arbitrage Bot
 """
 
@@ -34,7 +34,38 @@ DRAWDOWN_OVERRIDE_PCT = 10.0
 
 LOT_SIZES = {"BTC": 0.001, "ETH": 0.01, "DEFAULT": 1.0}
 
+# ── Symmetric Leverage Tables (AGENTS.md: both legs must use same leverage) ──
+# Delta Exchange India max leverage per coin
+DELTA_MAX_LEVERAGE = {
+    "BTC": 100.0, "ETH": 100.0,
+    "SOL": 50.0, "XRP": 50.0, "DOGE": 50.0, "BNB": 50.0,
+    "1000SATS": 50.0, "ADA": 50.0, "AVAX": 50.0, "LINK": 50.0,
+    "NEAR": 50.0, "SUI": 50.0, "PEPE": 50.0, "SHIB": 50.0, "WIF": 50.0,
+    "_DEFAULT": 20.0,
+}
+
+# CoinDCX (Binance-backed) max leverage per coin
+COINDCX_MAX_LEVERAGE = {
+    "BTC": 125.0, "ETH": 100.0,
+    "SOL": 50.0, "XRP": 50.0, "DOGE": 50.0, "BNB": 75.0,
+    "1000SATS": 20.0, "ADA": 75.0, "AVAX": 50.0, "LINK": 50.0,
+    "NEAR": 50.0, "SUI": 50.0, "PEPE": 50.0, "SHIB": 50.0, "WIF": 50.0,
+    "_DEFAULT": 20.0,
+}
+
+def get_symmetric_leverage(coin: str) -> int:
+    """
+    Returns SYMMETRIC leverage = min(delta_max, coindcx_max).
+    Both legs always trade at the SAME leverage — no imbalance between exchanges.
+    Example: Delta=100x, CoinDCX=20x → Both use 20x.
+    """
+    c = coin.upper()
+    d_lev = DELTA_MAX_LEVERAGE.get(c, DELTA_MAX_LEVERAGE["_DEFAULT"])
+    c_lev = COINDCX_MAX_LEVERAGE.get(c, COINDCX_MAX_LEVERAGE["_DEFAULT"])
+    return int(min(d_lev, c_lev))
+
 logger = logging.getLogger("LiveOrderExecutor")
+
 
 
 def sign_delta(method: str, path: str, payload_str: str) -> Tuple[str, str]:
