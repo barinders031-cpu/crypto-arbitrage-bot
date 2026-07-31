@@ -594,7 +594,8 @@ def bot_background_loop():
             bot_state["next_funding_countdown"] = f"{top['mins_left']}m {secs % 60}s to funding ({target_ist_str})"
 
             funding_window_key = f"{coin}_{funding_ts_utc.strftime('%Y%m%d%H%M')}"
-            is_entry_window    = 60 <= secs <= 120
+            # [TIMING OPTIMIZATION]: Allow entry from T-3m (180s) down to T-5s so no funding interval is ever missed
+            is_entry_window    = 5 <= secs <= 180
             already_executed   = funding_window_key in executed_windows
 
             cutoff = now_utc - datetime.timedelta(hours=2)
