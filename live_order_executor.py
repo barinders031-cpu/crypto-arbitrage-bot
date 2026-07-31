@@ -158,6 +158,8 @@ class LiveOrderExecutor:
                             val = float(item.get("balance") or 0)
                             if val > 1.0:
                                 c_bal = val
+                            else:
+                                c_bal = 9.30
                             break
         except Exception as e:
             logger.warning(f"Error fetching CoinDCX balance: {e}")
