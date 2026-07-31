@@ -443,11 +443,12 @@ def bot_background_loop():
             # ── PHASE 2: Fetch Live Real Account Balances & Rates ──
             if _live_executor:
                 try:
-                    _d_bal, _c_bal, _tot_bal = asyncio.run(_live_executor.fetch_live_balances())
-                    bot_state["real_balance_display"] = f"Delta: ${_d_bal:.2f} | CoinDCX: ${_c_bal:.2f} | Total: ${_tot_bal:.2f}"
+                    _d_bal, _c_bal, _min_margin = asyncio.run(_live_executor.fetch_live_balances())
+                    _total_capital = _d_bal + _c_bal
+                    bot_state["real_balance_display"] = f"Delta: ${_d_bal:.2f} | CoinDCX: ${_c_bal:.2f} | Total: ${_total_capital:.2f}"
                     bot_state["delta_balance"] = _d_bal
                     bot_state["coindcx_balance"] = _c_bal
-                    bot_state["paper_wallet_balance"] = _tot_bal
+                    bot_state["paper_wallet_balance"] = _total_capital
                 except Exception as _bal_err:
                     pass
 
