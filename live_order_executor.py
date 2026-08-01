@@ -219,33 +219,19 @@ class LiveOrderExecutor:
         except Exception as e:
             logger.warning(f"Error fetching CoinDCX balance: {e} — using last known ${c_bal:.2f}")
 
-        # Check environment variable manual overrides first (if user set exact balance in Render / .env)
-        env_c_bal = os.getenv("COINDCX_OVERRIDE_BALANCE") or os.getenv("COINDCX_BALANCE_USD")
-        env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")  or os.getenv("DELTA_BALANCE_USD")
+        # Zero-cache live balance evaluation
+        # Minimum Margin Equalizer Protocol: Check < $2.00 threshold
+        if d_bal < 2.0 or c_bal < 2.0:
+            logger.warning(
+                f"🚨 CRITICAL: Insufficient Margin on Exchange! Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f} "
+                f"(Minimum required: $2.00 USD). Skipping execution until balances are replenished."
+            )
+            min_margin = 0.0
+        else:
+            # 75% of lower balance = safe execution margin (leaves 25% headroom for fees/slippage)
+            min_margin = min(d_bal, c_bal) * 0.75
+            logger.info(f"💰 LIVE ZERO-CACHE BALANCE: Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f} | Safe Margin(75%)=${min_margin:.2f}")
 
-        if env_d_bal:
-            try:
-                d_bal = float(env_d_bal)
-                self._last_d_bal = d_bal
-            except ValueError:
-                pass
-        elif d_bal < 0.01:
-            d_bal = getattr(self, '_last_d_bal', 1.00)
-            self._last_d_bal = d_bal
-
-        if env_c_bal:
-            try:
-                c_bal = float(env_c_bal)
-                self._last_c_bal = c_bal
-            except ValueError:
-                pass
-        elif c_bal < 0.01:
-            c_bal = getattr(self, '_last_c_bal', 9.31)
-            self._last_c_bal = c_bal
-
-        # 75% of lower balance = safe execution margin (leaves 25% headroom for fees/slippage)
-        min_margin = min(d_bal, c_bal) * 0.75
-        logger.info(f"💰 LIVE BALANCE AUDIT: Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f} | Safe Margin(75%)=${min_margin:.2f}")
         return d_bal, c_bal, min_margin
 
 
