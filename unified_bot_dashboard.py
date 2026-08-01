@@ -1359,6 +1359,8 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             </div>
 
             <div style="display: flex; gap: 10px; align-items: center;">
+                <button class="btn-tg" style="background: linear-gradient(135deg, #10b981, #059669);" onclick="document.getElementById('section-3-options').scrollIntoView({behavior: 'smooth'})">🎯 Jump to Options Parity</button>
+
                 <div class="telegram-widget">
                     <span style="font-size: 12px; color: var(--text-muted);">CoinDCX Bal ($):</span>
                     <input type="number" id="input-coindcx-bal" placeholder="e.g. 15.00" step="0.5" style="width: 80px;">
@@ -1570,7 +1572,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
         <!-- ============================================================================== -->
         <!-- DIVIDER & SECTION 3: DELTA EXCHANGE INDIA OPTIONS PUT-CALL PARITY ARBITRAGE -->
         <!-- ============================================================================== -->
-        <hr class="section-divider">
+        <hr class="section-divider" id="section-3-options">
 
         <div class="section-header">
             <div class="section-title">
