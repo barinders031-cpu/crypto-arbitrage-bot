@@ -1775,6 +1775,8 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             data = json.loads(post_data.decode('utf-8'))
 
             coindcx_bal = data.get('coindcx_balance')
+            delta_bal   = data.get('delta_balance')
+
             if coindcx_bal is not None:
                 try:
                     val = float(coindcx_bal)
@@ -1786,10 +1788,32 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                 except ValueError:
                     pass
 
+            if delta_bal is not None:
+                try:
+                    val = float(delta_bal)
+                    os.environ["DELTA_OVERRIDE_BALANCE"] = str(val)
+                    if _live_executor:
+                        _live_executor._last_d_bal = val
+                    bot_state["delta_balance"] = val
+                    add_log(f"⚙️ [USER OVERRIDE] Delta Exchange Balance set to ${val:.2f} USD")
+                except ValueError:
+                    pass
+
+            d_curr = bot_state.get("delta_balance", 8.37)
+            c_curr = bot_state.get("coindcx_balance", 9.31)
+            tot_curr = d_curr + c_curr
+            bot_state["real_balance_display"] = f"Delta: ${d_curr:.2f} | CoinDCX: ${c_curr:.2f} | Total: ${tot_curr:.2f}"
+            bot_state["paper_wallet_balance"] = tot_curr
+
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.end_headers()
-            self.wfile.write(json.dumps({"status": "ok", "coindcx_balance": os.getenv("COINDCX_OVERRIDE_BALANCE")}).encode('utf-8'))
+            self.wfile.write(json.dumps({
+                "status": "ok",
+                "delta_balance": os.getenv("DELTA_OVERRIDE_BALANCE", d_curr),
+                "coindcx_balance": os.getenv("COINDCX_OVERRIDE_BALANCE", c_curr),
+                "real_balance_display": bot_state["real_balance_display"]
+            }).encode('utf-8'))
             return
 
     def log_message(self, format, *args):
