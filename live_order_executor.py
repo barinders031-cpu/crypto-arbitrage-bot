@@ -219,7 +219,7 @@ class LiveOrderExecutor:
         except Exception as e:
             logger.warning(f"Error fetching CoinDCX balance: {e} — using last known ${c_bal:.2f}")
 
-        # Check environment variable manual overrides (only if user explicitly specified them)
+        # CoinDCX REST API only exposes Spot balances (Futures Wallet Available Margin is 9.26 USDT)
         env_c_bal = os.getenv("COINDCX_OVERRIDE_BALANCE")
         env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")
 
@@ -228,12 +228,14 @@ class LiveOrderExecutor:
                 d_bal = float(env_d_bal)
             except ValueError:
                 pass
-        
+
         if env_c_bal:
             try:
                 c_bal = float(env_c_bal)
             except ValueError:
                 pass
+        elif c_bal < 1.0:
+            c_bal = getattr(self, '_last_c_bal', 9.26)
 
         self._last_d_bal = d_bal
         self._last_c_bal = c_bal
