@@ -362,20 +362,15 @@ class HFTFundingArbitrageEngine:
     # =========================================================================
     def calculate_hft_sizing(self, coin: str, mark_price: float) -> Tuple[int, float, float]:
         """
-        Universal Base Asset Quantity Sizing Protocol (AGENTS.md Rule 8 & Rule 9):
+        Universal Base Asset Quantity Sizing Protocol (AGENTS.md Rule 8):
         1. Q_base  = Target Notional USD / Mark Price
         2. Lots    = round(Q_base / Lot Size)
         3. Q_exact = Lots * Lot Size   (to 4 decimal places)
-        Enforces MIN_COINDCX_NOTIONAL = 25.0 USDT for CoinDCX order acceptance.
         Returns: (delta_lots, exact_qty, actual_notional_usd)
         """
-        MIN_COINDCX_NOTIONAL = 25.0
-        effective_notional = max(self.target_notional_usd, MIN_COINDCX_NOTIONAL)
         lot_size      = LOT_SIZES.get(coin, LOT_SIZES["DEFAULT"])
-        raw_base_qty  = effective_notional / mark_price if mark_price > 0 else 0.0
+        raw_base_qty  = self.target_notional_usd / mark_price if mark_price > 0 else 0.0
         delta_lots    = max(1, round(raw_base_qty / lot_size))
-        while mark_price > 0 and (delta_lots * lot_size * mark_price) < MIN_COINDCX_NOTIONAL:
-            delta_lots += 1
         exact_qty     = round(delta_lots * lot_size, 4)
         notional_usd  = round(exact_qty * mark_price, 2)
         return delta_lots, exact_qty, notional_usd
