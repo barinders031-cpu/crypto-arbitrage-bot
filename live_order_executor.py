@@ -212,19 +212,9 @@ class LiveOrderExecutor:
         except Exception as e:
             logger.warning(f"Error fetching CoinDCX balance: {e} — using last known ${c_bal:.2f}")
 
-        # Check environment variable manual overrides first (if user set exact balance in Render)
+        # Check environment variable manual overrides first (if user set exact balance in Render / .env)
         env_c_bal = os.getenv("COINDCX_OVERRIDE_BALANCE") or os.getenv("COINDCX_BALANCE_USD")
         env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")  or os.getenv("DELTA_BALANCE_USD")
-
-        if env_c_bal:
-            try:
-                c_bal = float(env_c_bal)
-                self._last_c_bal = c_bal
-            except ValueError:
-                pass
-        elif c_bal < 1.0:
-            c_bal = getattr(self, '_last_c_bal', 9.31)
-            self._last_c_bal = c_bal
 
         if env_d_bal:
             try:
@@ -232,9 +222,19 @@ class LiveOrderExecutor:
                 self._last_d_bal = d_bal
             except ValueError:
                 pass
-        elif d_bal < 1.0:
-            d_bal = getattr(self, '_last_d_bal', 8.37)
+        elif d_bal < 0.01:
+            d_bal = getattr(self, '_last_d_bal', 1.00)
             self._last_d_bal = d_bal
+
+        if env_c_bal:
+            try:
+                c_bal = float(env_c_bal)
+                self._last_c_bal = c_bal
+            except ValueError:
+                pass
+        elif c_bal < 0.01:
+            c_bal = getattr(self, '_last_c_bal', 9.31)
+            self._last_c_bal = c_bal
 
         # 75% of lower balance = safe execution margin (leaves 25% headroom for fees/slippage)
         min_margin = min(d_bal, c_bal) * 0.75
