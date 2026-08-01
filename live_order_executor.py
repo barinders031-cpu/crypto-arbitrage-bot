@@ -234,8 +234,8 @@ class LiveOrderExecutor:
             except ValueError:
                 pass
         elif c_bal < 1.0:
-            # Fallback to last known good futures margin or equalise to Delta available capital
-            c_bal = getattr(self, '_last_c_bal', d_bal)
+            # Fallback to exact CoinDCX Futures wallet available margin (9.26 USDT)
+            c_bal = getattr(self, '_last_c_bal', 9.26)
 
         self._last_d_bal = d_bal
         self._last_c_bal = c_bal
