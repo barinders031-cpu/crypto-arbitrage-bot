@@ -31,7 +31,7 @@ COINDCX_API_KEY    = os.getenv("COINDCX_API_KEY",    "2b28b8cad04d91128eb92048ac
 COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "2fc83416123aec1d0f60fb66e5f52207cfbfee03f3a11ebc5fab4821486e036a")
 
 # Master live/paper toggle — default TRUE for real money execution
-LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "false").strip().lower() in ("true", "1", "yes")
+LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "true").strip().lower() in ("true", "1", "yes")
 
 # Fee Schedule (Inc. 18% GST)
 FEE_TAKER_DELTA_ENTRY   = 0.00059
@@ -41,8 +41,8 @@ FEE_MAKER_COINDCX_EXIT  = 0.000236
 TOTAL_ROUNDTRIP_FEE_PCT = 0.001416  # 0.1416% total dual-leg roundtrip
 
 # Safety Thresholds
-TAKER_MAX_SPREAD_THRES   = 0.05    # High-liquidity threshold (0.05%)
-MAKER_MAX_SPREAD_THRES   = 0.50    # Max spread allowed for Maker Limit Orders
+TAKER_MAX_SPREAD_THRES   = 0.35    # Max spread threshold (0.35%)
+MAKER_MAX_SPREAD_THRES   = 0.75    # Max spread allowed for Maker Limit Orders
 DRAWDOWN_OVERRIDE_PCT    = 10.0    # Emergency Exit if loss >= 10% of margin
 MIN_GROSS_SPREAD_PCT     = 0.15    # Minimum Gross Spread required to trade
 
@@ -445,14 +445,16 @@ class LiveOrderExecutor:
 
         # ────────────── CASE EVALUATION ──────────────
 
-        # CASE 4: Both Spreads are Wide (> 0.05%) → ABORT
+        # CASE 4: Both Spreads are Wide (> TAKER_MAX_SPREAD_THRES) -> Check Net Profit Gate before aborting
+        net_after_spreads = gross_spread_pct - (TOTAL_ROUNDTRIP_FEE_PCT * 100.0) - (d_spread + c_spread) / 2.0
         if d_spread > TAKER_MAX_SPREAD_THRES and c_spread > TAKER_MAX_SPREAD_THRES:
-            logger.warning(f"⛔ CASE 4 ABORT: Both exchanges have wide spreads. Rejecting trade.")
-            return {"status": "ABORTED_BOTH_EXCHANGES_WIDE_SPREAD", "d_spread": d_spread, "c_spread": c_spread}
+            if net_after_spreads < MIN_GROSS_SPREAD_PCT:
+                logger.warning(f"⛔ CASE 4 ABORT: Spreads too wide for net profit ({net_after_spreads:.4f}% < {MIN_GROSS_SPREAD_PCT}%). Rejecting trade.")
+                return {"status": "ABORTED_BOTH_EXCHANGES_WIDE_SPREAD", "d_spread": d_spread, "c_spread": c_spread}
 
-        # CASE 3: Both Spreads are Tight (<= 0.05%) → Simultaneous Parallel Market Orders (<20ms)
-        if d_spread <= TAKER_MAX_SPREAD_THRES and c_spread <= TAKER_MAX_SPREAD_THRES:
-            logger.info(f"⚡ CASE 3 EXECUTION: Both spreads tight! Firing parallel market orders...")
+        # CASE 3: Spreads within limits -> Simultaneous Parallel Market Orders (<20ms)
+        if (d_spread <= TAKER_MAX_SPREAD_THRES and c_spread <= TAKER_MAX_SPREAD_THRES) or net_after_spreads >= MIN_GROSS_SPREAD_PCT:
+            logger.info(f"⚡ CASE 3 EXECUTION: Spreads OK (Net After Spreads={net_after_spreads:.4f}%). Firing parallel market orders...")
             t0 = time.perf_counter()
             res_d, res_c = await asyncio.gather(
                 self._delta_order(delta_sym, delta_side, delta_lots, order_type="market_order"),

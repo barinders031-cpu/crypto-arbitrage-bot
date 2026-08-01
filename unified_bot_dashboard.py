@@ -76,8 +76,8 @@ paper_history = []
 triangular_logs = []
 triangular_history = []
 
-# Live execution config from environment
-MARGIN_PER_EXCHANGE_USD = float(os.getenv("MARGIN_PER_EXCHANGE_USD", "10"))
+# Live execution config from environment — enforce min $25.0 USD for CoinDCX order value compliance
+MARGIN_PER_EXCHANGE_USD = max(float(os.getenv("MARGIN_PER_EXCHANGE_USD", "25")), 25.0)
 
 bot_state = {
     # Engine 1: Cross-Exchange Funding
@@ -221,6 +221,13 @@ def fetch(url, timeout=6):
         return data
     except Exception:
         return []
+
+def fetch_binance_funding_info():
+    """Fetches funding interval hours (1H, 2H, 4H, 8H) for all contracts."""
+    data = fetch("https://fapi.binance.com/fapi/v1/fundingInfo")
+    if isinstance(data, list):
+        return {item.get('symbol'): float(item.get('fundingIntervalHours', 8)) for item in data if isinstance(item, dict)}
+    return {}
 
 def fetch_coindcx_binance_funding():
     """Fetches perpetual funding rates from Binance or global fallback exchanges (Gate.io / MEXC) when deployed on cloud hosts (e.g. Render US)."""
@@ -506,6 +513,7 @@ def bot_background_loop():
                     delta_map[coin] = {'rate': rate_pct, 'h': h, 'sym': sym, 'mark': mark}
 
             binance_funding = fetch_coindcx_binance_funding()
+            binance_intervals = fetch_binance_funding_info()
             binance_map = {}
             coindcx_map = {}
             for b in binance_funding:
@@ -514,8 +522,9 @@ def bot_background_loop():
                     coin     = sym[:-4]
                     rate_pct = float(b.get('lastFundingRate') or 0) * 100.0
                     mark     = float(b.get('markPrice') or 0)
-                    binance_map[coin] = {'rate': rate_pct, 'sym': sym, 'mark': mark}
-                    coindcx_map[coin] = {'rate': rate_pct, 'h': 8.0, 'sym': f"B-{sym}", 'mark': mark}
+                    h_b      = binance_intervals.get(sym, 8.0)
+                    binance_map[coin] = {'rate': rate_pct, 'h': h_b, 'sym': sym, 'mark': mark}
+                    coindcx_map[coin] = {'rate': rate_pct, 'h': h_b, 'sym': f"B-{sym}", 'mark': mark}
 
             results = []
             for coin, d in delta_map.items():
@@ -543,11 +552,11 @@ def bot_background_loop():
                 funding_ts_utc = now_utc.replace(
                     hour=next_settlement_h_utc, minute=0, second=0, microsecond=0
                 ) + datetime.timedelta(days=overflow_days)
-                if funding_ts_utc <= now_utc:
+                if funding_ts_utc <= now_utc + datetime.timedelta(seconds=5):
                     funding_ts_utc += datetime.timedelta(hours=h_int)
 
-                mins_left = int((funding_ts_utc - now_utc).total_seconds() // 60)
-                secs_left = int((funding_ts_utc - now_utc).total_seconds())
+                secs_left = max(0, int((funding_ts_utc - now_utc).total_seconds()))
+                mins_left = secs_left // 60
                 target_ist = funding_ts_utc + datetime.timedelta(hours=5, minutes=30)
                 time_label = target_ist.strftime("%H:%M IST")
 
@@ -1091,6 +1100,9 @@ def options_parity_background_loop():
                 opps = options_parity_engine.scan_parity_opportunities(products, ticker_map)
                 bot_state["options_parity_opportunities"] = opps
                 bot_state["options_parity_last_scan"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
+                
+                # Send Telegram Alerts for opportunities with >= $0.20 USD net profit / lot
+                options_parity_engine.notify_telegram_opportunities(opps)
                 
                 # Check and auto-close Futures leg upon option expiry settlement
                 loop.run_until_complete(options_parity_engine.monitor_and_autoclose_at_expiry())

@@ -200,17 +200,14 @@ class HFTFundingArbitrageEngine:
                 if mark <= 0:
                     continue
 
-                # Delta funding_rate is a raw decimal (e.g. 0.001 = 0.1%)
-                raw_rate_decimal = float(t.get('funding_rate') or 0)
+                # CRITICAL FIX: Delta API 'funding_rate' is ALREADY in percentage form (e.g. -0.3529 means -0.3529% per interval)
+                raw_rate_pct = float(t.get('funding_rate') or 0)
                 actual_interval_h = interval_map.get(sym, 8.0)
 
-                # BUG #2 FIX: Normalise to per-8H equivalent for fair comparison
-                # rate_per_8h = raw_rate * (8 / actual_interval_h)
-                rate_8h_decimal = raw_rate_decimal * (NORMALISE_TO_HOURS / actual_interval_h)
-                rate_8h_pct     = rate_8h_decimal * 100.0  # Convert to percentage
+                # Normalise to per-8H equivalent for fair comparison with CoinDCX
+                rate_8h_pct = raw_rate_pct * (NORMALISE_TO_HOURS / actual_interval_h)
 
                 # Extract coin key — Delta symbols end with 'USD'
-                # e.g. ETHUSD -> ETH, BTCUSD -> BTC, 1000FLOKIUSD -> 1000FLOKI
                 if sym.endswith('USD'):
                     coin = sym[:-3]   # Strip last 3 chars 'USD'
                 else:
@@ -219,7 +216,7 @@ class HFTFundingArbitrageEngine:
                 ticker_map[coin] = {
                     'symbol':        sym,
                     'rate_pct':      rate_8h_pct,      # Normalised per-8H %
-                    'raw_rate_pct':  raw_rate_decimal * 100.0,  # Actual rate %
+                    'raw_rate_pct':  raw_rate_pct,     # Actual rate % (UI format)
                     'interval_h':    actual_interval_h,
                     'mark':          mark,
                 }
