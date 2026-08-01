@@ -219,33 +219,33 @@ class LiveOrderExecutor:
         except Exception as e:
             logger.warning(f"Error fetching CoinDCX balance: {e} — using last known ${c_bal:.2f}")
 
-        # Check environment variable manual overrides first (if user set exact balance in Render / .env)
-        env_c_bal = os.getenv("COINDCX_OVERRIDE_BALANCE") or os.getenv("COINDCX_BALANCE_USD")
-        env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")  or os.getenv("DELTA_BALANCE_USD")
+        # Check environment variable manual overrides (only if user explicitly specified them)
+        env_c_bal = os.getenv("COINDCX_OVERRIDE_BALANCE")
+        env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")
 
         if env_d_bal:
             try:
                 d_bal = float(env_d_bal)
-                self._last_d_bal = d_bal
             except ValueError:
                 pass
-        elif d_bal < 0.01:
-            d_bal = getattr(self, '_last_d_bal', 1.00)
-            self._last_d_bal = d_bal
-
+        
         if env_c_bal:
             try:
                 c_bal = float(env_c_bal)
-                self._last_c_bal = c_bal
             except ValueError:
                 pass
-        elif c_bal < 0.01:
-            c_bal = getattr(self, '_last_c_bal', 9.31)
-            self._last_c_bal = c_bal
+
+        self._last_d_bal = d_bal
+        self._last_c_bal = c_bal
 
         # 75% of lower balance = safe execution margin (leaves 25% headroom for fees/slippage)
-        min_margin = min(d_bal, c_bal) * 0.75
-        logger.info(f"💰 LIVE BALANCE AUDIT: Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f} | Safe Margin(75%)=${min_margin:.2f}")
+        if min(d_bal, c_bal) < 1.0:
+            min_margin = 0.0
+            logger.warning(f"⚠️ INSUFFICIENT MARGIN DETECTED: Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f}. Minimum required: $1.00 USD.")
+        else:
+            min_margin = min(d_bal, c_bal) * 0.75
+
+        logger.info(f"💰 LIVE REAL-TIME BALANCE STREAM: Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f} | Dynamic Safe Margin(75%)=${min_margin:.2f}/exchange")
         return d_bal, c_bal, min_margin
 
 
