@@ -1746,18 +1746,55 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
 
     def do_POST(self):
-        if self.path in ('/api/exit', '/api/close'):
+        if self.path in ('/api/entry', '/api/trade'):
+            if _live_executor:
+                try:
+                    content_length = int(self.headers.get('Content-Length', 0))
+                    post_data = self.rfile.read(content_length) if content_length > 0 else b'{}'
+                    req_data = json.loads(post_data.decode('utf-8')) if post_data else {}
+                    
+                    coin = req_data.get('coin', 'ETH').upper()
+                    notional = float(req_data.get('notional', 37.32)) # Satisfies CoinDCX >24.0 USDT min order rule
+                    
+                    entry_result = run_async(_live_executor.execute_entry(
+                        delta_sym=f"{coin}USD",
+                        delta_side="sell",
+                        delta_lots=2,  # 2 Lots ETH = 0.02 ETH (~$37.3 USD Notional, >$24.0 min requirement)
+                        coindcx_sym=f"B-{coin}_USDT",
+                        coindcx_side="buy",
+                        exact_qty=0.02,
+                        leverage=10,   # Low safe leverage (10x)
+                        coin=coin,
+                        mark_delta=1866.0,
+                        mark_coindcx=1866.0,
+                        notional_usd=notional,
+                        gross_spread_pct=0.15,
+                    ))
+                    add_log(f"⚡ [LIVE ENTRY FIRED FROM RENDER API] Result: {entry_result}")
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"status": "ok", "entry_result": entry_result}, default=str).encode('utf-8'))
+                    return
+                except Exception as _ex:
+                    add_log(f"❌ Error executing live entry from Render API: {_ex}")
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"status": "error", "message": str(_ex)}).encode('utf-8'))
+                    return
+        elif self.path in ('/api/exit', '/api/close'):
             if _live_executor:
                 try:
                     exit_result = run_async(_live_executor.execute_exit(
                         delta_sym="ETHUSD",
                         delta_side="SELL",
-                        delta_lots=1,
+                        delta_lots=2,
                         coindcx_sym="B-ETH_USDT",
                         coindcx_side="BUY",
-                        exact_qty=0.01,
-                        leverage=20,
-                        notional_usd=18.66,
+                        exact_qty=0.02,
+                        leverage=10,
+                        notional_usd=37.32,
                         gross_spread_pct=0.15,
                         trigger_reason="User Manual Exit Request via Render Web API"
                     ))
