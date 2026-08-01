@@ -171,14 +171,46 @@ async def continuous_funding_scheduler():
         await asyncio.sleep(3)
 
 
+async def safety_position_monitor_worker():
+    """5-Minute Safety Position Audit Worker for Render Server."""
+    await asyncio.sleep(45)
+    while True:
+        try:
+            if LIVE_EXECUTION:
+                from live_order_executor import get_executor
+                executor = get_executor()
+                if executor:
+                    res = await executor.execute_full_account_position_close(
+                        trigger_reason="5-Minute Safety Audit Check"
+                    )
+                    d_closed = res.get("closed_delta", [])
+                    c_closed = res.get("closed_coindcx", [])
+                    if d_closed or c_closed:
+                        send_telegram_alert(
+                            f"🚨 *5-MIN SAFETY AUDIT: STRAY POSITION FLUSHED* 🚨\n\n"
+                            f"🏛️ *Delta Closed:* `{d_closed}`\n"
+                            f"🏛️ *CoinDCX Closed:* `{c_closed}`\n"
+                            f"🛡️ *Status:* 100% Market Neutrality Restored!"
+                        )
+                        logger.warning(f"🛡️ [SAFETY MONITOR] Closed stray positions: Delta={d_closed}, CoinDCX={c_closed}")
+                    else:
+                        logger.info("🟢 [SAFETY MONITOR] Audit passed — zero stray open positions.")
+        except Exception as e:
+            logger.warning(f"⚠️ [SAFETY MONITOR ERROR]: {e}")
+
+        await asyncio.sleep(300)
+
+
 async def start_background_tasks(app):
     app["scheduler_task"] = asyncio.create_task(continuous_funding_scheduler())
     app["ping_task"] = asyncio.create_task(self_ping_worker())
+    app["safety_task"] = asyncio.create_task(safety_position_monitor_worker())
 
 
 async def cleanup_background_tasks(app):
     app["scheduler_task"].cancel()
     app["ping_task"].cancel()
+    app["safety_task"].cancel()
     await engine.close_session()
 
 

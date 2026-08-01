@@ -2037,10 +2037,45 @@ def keep_alive_self_ping_worker():
             pass
         time.sleep(180)  # Self-ping every 3 minutes (180s)
 
+def safety_position_monitor_worker():
+    """
+    5-Minute Safety Audit Worker: Every 5 minutes (300s), queries live active positions
+    on both exchanges (Delta India & CoinDCX). If any unhedged or stray open position is found
+    outside active scalping, it fires emergency reduce_only market orders to close 100% of the position!
+    """
+    time.sleep(35)
+    while True:
+        try:
+            if LIVE_EXECUTION and _live_executor:
+                ts_now = datetime.datetime.now().strftime("%H:%M:%S IST")
+                res = run_async(_live_executor.execute_full_account_position_close(
+                    trigger_reason="5-Minute Safety Audit Check"
+                ))
+                d_closed = res.get("closed_delta", [])
+                c_closed = res.get("closed_coindcx", [])
+                if d_closed or c_closed:
+                    msg = (
+                        f"🚨 *5-MIN SAFETY AUDIT: STRAY POSITION FLUSHED* 🚨\n\n"
+                        f"🏛️ *Delta Closed:* `{d_closed}`\n"
+                        f"🏛️ *CoinDCX Closed:* `{c_closed}`\n"
+                        f"⏱️ *Audit Time:* `{ts_now}`\n"
+                        f"🛡️ *Status:* 100% Market Neutral Restored!"
+                    )
+                    send_telegram_alert(msg)
+                    add_log(f"🛡️ [SAFETY MONITOR {ts_now}] Stray position detected & closed: Delta={d_closed}, CoinDCX={c_closed}")
+                else:
+                    add_log(f"🟢 [SAFETY MONITOR {ts_now}] Audit Passed — Zero Stray Positions Open.")
+        except Exception as _sec_err:
+            add_log(f"⚠️ [SAFETY MONITOR WARNING]: {_sec_err}")
+
+        time.sleep(300)  # Audit every 5 minutes (300s)
+
 def run_server():
     socketserver.TCPServer.allow_reuse_address = True
     # Start 24/7 Anti-Sleep Self-Ping Background Thread
     threading.Thread(target=keep_alive_self_ping_worker, daemon=True).start()
+    # Start 5-Minute Emergency Position Safety Monitor Thread
+    threading.Thread(target=safety_position_monitor_worker, daemon=True).start()
     with socketserver.TCPServer(("", PORT), WebDashboardHandler) as httpd:
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Multi-Engine Web Dashboard running at http://localhost:{PORT}")
         try:
