@@ -76,8 +76,8 @@ paper_history = []
 triangular_logs = []
 triangular_history = []
 
-# Live execution config from environment — enforce min $25.0 USD for CoinDCX order value compliance
-MARGIN_PER_EXCHANGE_USD = max(float(os.getenv("MARGIN_PER_EXCHANGE_USD", "25")), 25.0)
+# Live execution config from environment — default fallback margin $10 USD (overwritten dynamically by 75% x min balance)
+MARGIN_PER_EXCHANGE_USD = float(os.getenv("MARGIN_PER_EXCHANGE_USD", "10"))
 
 bot_state = {
     # Engine 1: Cross-Exchange Funding
