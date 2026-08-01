@@ -600,7 +600,7 @@ class LiveOrderExecutor:
 
         # 1. Fetch & Close ALL Delta Active Positions
         try:
-            d_pos_resp = await self._delta_get("/v2/positions")
+            d_pos_resp = await self._delta_get("/v2/positions/margined")
             d_positions = d_pos_resp.get("result", []) if isinstance(d_pos_resp, dict) else []
             for p in d_positions:
                 size = int(p.get("size") or 0)
