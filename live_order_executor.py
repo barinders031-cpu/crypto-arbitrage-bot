@@ -223,7 +223,8 @@ class LiveOrderExecutor:
             except ValueError:
                 pass
         elif c_bal < 1.0:
-            c_bal = getattr(self, '_last_c_bal', d_bal if d_bal >= 1.0 else 9.31)
+            c_bal = getattr(self, '_last_c_bal', 9.31)
+            self._last_c_bal = c_bal
 
         if env_d_bal:
             try:
@@ -233,6 +234,7 @@ class LiveOrderExecutor:
                 pass
         elif d_bal < 1.0:
             d_bal = getattr(self, '_last_d_bal', 8.37)
+            self._last_d_bal = d_bal
 
         # 75% of lower balance = safe execution margin (leaves 25% headroom for fees/slippage)
         min_margin = min(d_bal, c_bal) * 0.75
@@ -337,6 +339,7 @@ class LiveOrderExecutor:
             "order_type":     order_type,
             "total_quantity": qty,
             "leverage":       leverage,
+            "margin_type":    "isolated",
         }
         if limit_price and order_type == "limit_order":
             order_dict["price"] = limit_price
