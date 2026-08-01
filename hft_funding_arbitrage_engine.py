@@ -770,9 +770,10 @@ def main():
     parser.add_argument("--live",  action="store_true", help="Live HFT Mode (requires API keys in env)")
     parser.add_argument("--notional", type=float, default=100.0, help="Target notional USD per exchange (default: $100)")
 
-    args = parser.parse_args()
+    env_live = os.getenv("LIVE_EXECUTION", "false").strip().lower() in ("true", "1", "yes")
+    is_live = args.live or env_live
 
-    if args.live:
+    if is_live:
         # Validate API keys present before going live
         missing = []
         if not DELTA_API_KEY:   missing.append("DELTA_API_KEY")
@@ -786,7 +787,7 @@ def main():
                 print(f"  $env:{k}='your_value'")
             sys.exit(1)
 
-    is_paper = not args.live
+    is_paper = not is_live
     engine   = HFTFundingArbitrageEngine(paper_mode=is_paper, target_notional_usd=args.notional)
 
     try:

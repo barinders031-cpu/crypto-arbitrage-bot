@@ -410,6 +410,8 @@ def bot_background_loop():
                             fee   = exit_result.get("fees_usd",    pe["coin_fee"])
                             live_tag = "🔴 LIVE"
                         except Exception as _ex:
+                            err_msg = f"🚨 CRITICAL LIVE EXIT ERROR: {_ex}"
+                            print(f"\n{'='*70}\n{err_msg}\n{'='*70}\n", flush=True)
                             add_log(f"❌ Live exit error: {_ex} — falling back to paper PnL")
                             net   = pe["net_pnl"]
                             gross = pe["gross_funding"]
@@ -698,8 +700,12 @@ def bot_background_loop():
                                 executed_windows.add(funding_window_key)
                                 continue
                             else:
-                                add_log(f"   ❌ Entry FAILED: {st}")
+                                err_msg = f"❌ LIVE ENTRY FAILED: Status={st} | Details={entry_result}"
+                                print(f"\n{'='*70}\n{err_msg}\n{'='*70}\n", flush=True)
+                                add_log(f"   ❌ Live Entry FAILED: Status={st} | Details={entry_result}")
                         except Exception as _ex:
+                            err_msg = f"🚨 CRITICAL LIVE ENTRY EXCEPTION: {_ex}"
+                            print(f"\n{'='*70}\n{err_msg}\n{'='*70}\n", flush=True)
                             add_log(f"   ❌ Live entry exception: {_ex}")
                     else:
                         live_entry_success = False  # Paper mode
@@ -1823,6 +1829,13 @@ def run_server():
     socketserver.TCPServer.allow_reuse_address = True
     with socketserver.TCPServer(("", PORT), WebDashboardHandler) as httpd:
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Multi-Engine Web Dashboard running at http://localhost:{PORT}")
+        try:
+            public_ip = urllib.request.urlopen('https://api.ipify.org', timeout=5).read().decode().strip()
+            print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🌍 OUTBOUND PUBLIC IP: {public_ip} (Add this IP to Delta Exchange API Whitelist if needed)")
+        except Exception:
+            pass
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛡️ [ANTI-SLEEP SAFEGUARD] Keep-Alive endpoint active at /ping or /health")
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 💡 [RENDER DEPLOYMENT TIP] Set UptimeRobot or Cron-Job.org to ping http://<your-render-app>.onrender.com/ping every 5 minutes to prevent auto-sleep.")
         httpd.serve_forever()
 
 if __name__ == '__main__':
