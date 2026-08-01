@@ -98,9 +98,11 @@
     - **BUY Call Option ($C$)**
     - **SELL Put Option ($P$)**
 - **Margin Allocation:** Maximize leverage (100x) using **75% of available Delta Balance** ($0.75 \times \text{Balance}_{\text{Delta}}$).
-- **Automatic Expiry Settlement & Futures Closure:**
-  - Hold options position until Option Expiry timestamp.
-  - At option settlement, options auto-settle on exchange.
-  - **Automatic Futures Closure:** Engine immediately fires a `reduce_only` market order to close the corresponding Futures leg simultaneously, locking 100% net parity profit.
+### 11. Minimum $0.20 USD Net Profit Gate per 0.001 BTC (1 Lot) Protocol
+- **Core Requirement:** Trade execution MUST guarantee a minimum net fee-deducted profit of **$\ge \$0.20$ USD (20 Cents)** per 0.001 BTC (1 Lot BTC).
+- **Execution Filter:**
+  - If $\text{Net Cash Profit} < \$0.20 \text{ USD}$ per Lot $\implies$ **REJECT TRADE ❌**
+  - If $\text{Net Cash Profit} \ge \$0.20 \text{ USD}$ per Lot $\implies$ **ACCEPT TRADE ✅**
+- **Dynamic Equal-Quantity Sizing:** Calculate maximum lots matching 75% available margin allocation ($0.75 \times \text{Balance}$), and execute equal quantity ($Q_{\text{Delta}} = Q_{\text{CoinDCX}}$) across both exchanges!
 
 

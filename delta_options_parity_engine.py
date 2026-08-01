@@ -170,9 +170,14 @@ class DeltaOptionsParityEngine:
                     net_conversion_pct = conversion_spread_pct - 0.12
                     net_reversal_pct = reversal_spread_pct - 0.12
 
+                    # Calculate Net USD profit per 1 Lot (0.001 BTC)
+                    lot_base = LOT_SIZES.get(coin, 0.001)
+                    net_conv_usd_per_lot = (net_conversion_pct / 100.0) * (S * lot_base)
+                    net_rev_usd_per_lot = (net_reversal_pct / 100.0) * (S * lot_base)
+
                     hours_to_exp = (call["exp_ts"] - now_ts) / 3600.0
 
-                    if net_conversion_pct >= MIN_NET_SPREAD_GATE:
+                    if net_conv_usd_per_lot >= 0.20:
                         opportunities.append({
                             "coin": coin,
                             "type": "CONVERSION",
@@ -187,11 +192,12 @@ class DeltaOptionsParityEngine:
                             "put_ask": put["best_ask"],
                             "gross_spread_pct": conversion_spread_pct,
                             "net_pnl_pct": net_conversion_pct,
+                            "net_usd_per_lot": net_conv_usd_per_lot,
                             "hours_to_exp": hours_to_exp,
                             "exp_ts": call["exp_ts"],
                             "action": "BUY Futures + BUY Put + SELL Call"
                         })
-                    elif net_reversal_pct >= MIN_NET_SPREAD_GATE:
+                    elif net_rev_usd_per_lot >= 0.20:
                         opportunities.append({
                             "coin": coin,
                             "type": "REVERSAL",
@@ -206,6 +212,7 @@ class DeltaOptionsParityEngine:
                             "put_ask": put["best_ask"],
                             "gross_spread_pct": reversal_spread_pct,
                             "net_pnl_pct": net_reversal_pct,
+                            "net_usd_per_lot": net_rev_usd_per_lot,
                             "hours_to_exp": hours_to_exp,
                             "exp_ts": call["exp_ts"],
                             "action": "SELL Futures + BUY Call + SELL Put"
