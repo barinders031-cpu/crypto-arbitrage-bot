@@ -96,10 +96,17 @@ def sign_coindcx(payload: dict) -> Tuple[str, str]:
 
 
 def calculate_sizing(coin: str, mark_price: float, target_notional_usd: float) -> Tuple[int, float, float]:
-    """Universal Base Asset Quantity Sizing Protocol (AGENTS.md Rule 8)."""
+    """Universal Base Asset Quantity Sizing Protocol (AGENTS.md Rule 8 & Rule 9)."""
+    MIN_COINDCX_NOTIONAL = 25.0  # CoinDCX requires order value >= 24.0 USDT
+    effective_notional = max(target_notional_usd, MIN_COINDCX_NOTIONAL)
     lot_size = LOT_SIZES.get(coin.upper(), LOT_SIZES["DEFAULT"])
-    raw_qty  = target_notional_usd / mark_price if mark_price > 0 else 0.0
+    raw_qty  = effective_notional / mark_price if mark_price > 0 else 0.0
     lots     = max(1, round(raw_qty / lot_size))
+    
+    # Guarantee notional >= 25.0 USDT for CoinDCX compliance
+    while mark_price > 0 and (lots * lot_size * mark_price) < MIN_COINDCX_NOTIONAL:
+        lots += 1
+
     exact    = round(lots * lot_size, 4)
     notional = round(exact * mark_price, 2)
     return lots, exact, notional

@@ -378,7 +378,7 @@ class HFTFundingArbitrageEngine:
     # =========================================================================
     # LIVE ORDER EXECUTION
     # =========================================================================
-    async def _execute_delta_live_order(self, symbol: str, side: str, lots: int) -> Dict:
+    async def _execute_delta_live_order(self, symbol: str, side: str, lots: int, reduce_only: bool = False) -> Dict:
         """Transmits a market order to Delta Exchange India REST API."""
         path        = "/v2/orders"
         url         = DELTA_BASE_URL + path
@@ -388,6 +388,8 @@ class HFTFundingArbitrageEngine:
             'side':           side.lower(),
             'order_type':     'market_order'
         }
+        if reduce_only:
+            payload['is_reduce_only'] = True
         payload_str = json.dumps(payload)
         t_stamp, sig = HFTOrderSigner.sign_delta_request('POST', path, payload_str, DELTA_API_SECRET)
 
@@ -418,7 +420,7 @@ class HFTFundingArbitrageEngine:
         except Exception as e:
             return {'exchange': 'Delta', 'latency_ms': 0.0, 'http_status': 500, 'success': False, 'error': str(e)}
 
-    async def _execute_coindcx_live_order(self, symbol: str, side: str, qty: float) -> Dict:
+    async def _execute_coindcx_live_order(self, symbol: str, side: str, qty: float, reduce_only: bool = False) -> Dict:
         """Transmits a market order to CoinDCX Futures REST API."""
         path    = "/exchange/v1/derivatives/futures/orders/create"
         url     = COINDCX_BASE_URL + path
@@ -429,6 +431,8 @@ class HFTFundingArbitrageEngine:
             'total_quantity': qty,
             'leverage':       10
         }
+        if reduce_only:
+            payload['position_intent'] = 'reduce_only'
         body_str, sig = HFTOrderSigner.sign_coindcx_request(payload, COINDCX_API_SECRET)
 
         req_headers = {
@@ -598,8 +602,8 @@ class HFTFundingArbitrageEngine:
             return {'status': 'SUCCESS_PAPER_EXIT', 'net_pnl_usd': net_pnl_usd}
 
         # --- LIVE EXIT ---
-        delta_task   = self._execute_delta_live_order(pos['delta_sym'], exit_delta_side, pos['delta_lots'])
-        coindcx_task = self._execute_coindcx_live_order(pos['coindcx_sym'], exit_coindcx_side, pos['exact_qty'])
+        delta_task   = self._execute_delta_live_order(pos['delta_sym'], exit_delta_side, pos['delta_lots'], reduce_only=True)
+        coindcx_task = self._execute_coindcx_live_order(pos['coindcx_sym'], exit_coindcx_side, pos['exact_qty'], reduce_only=True)
 
         res_d, res_c = await asyncio.gather(delta_task, coindcx_task)
         total_ms     = (time.perf_counter() - t_start) * 1000.0
