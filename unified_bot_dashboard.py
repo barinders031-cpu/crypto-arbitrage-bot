@@ -1881,8 +1881,21 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
     def log_message(self, format, *args):
         return
 
+def keep_alive_self_ping_worker():
+    """Background thread that self-pings the server every 3 minutes so Render free tier never goes to sleep."""
+    time.sleep(10)
+    while True:
+        try:
+            render_url = os.getenv("RENDER_EXTERNAL_URL") or f"http://localhost:{PORT}"
+            urllib.request.urlopen(f"{render_url}/api/ping", timeout=10)
+        except Exception:
+            pass
+        time.sleep(180)  # Self-ping every 3 minutes (180s)
+
 def run_server():
     socketserver.TCPServer.allow_reuse_address = True
+    # Start 24/7 Anti-Sleep Self-Ping Background Thread
+    threading.Thread(target=keep_alive_self_ping_worker, daemon=True).start()
     with socketserver.TCPServer(("", PORT), WebDashboardHandler) as httpd:
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Multi-Engine Web Dashboard running at http://localhost:{PORT}")
         try:
@@ -1890,8 +1903,8 @@ def run_server():
             print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🌍 OUTBOUND PUBLIC IP: {public_ip} (Add this IP to Delta Exchange API Whitelist if needed)")
         except Exception:
             pass
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛡️ [ANTI-SLEEP SAFEGUARD] Keep-Alive endpoint active at /ping or /health")
-        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 💡 [RENDER DEPLOYMENT TIP] Set UptimeRobot or Cron-Job.org to ping http://<your-render-app>.onrender.com/ping every 5 minutes to prevent auto-sleep.")
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 🛡️ [ANTI-SLEEP SAFEGUARD] 24/7 Self-Ping Worker & Keep-Alive active at /api/ping")
+        print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] 💡 [RENDER DEPLOYMENT] Server continuously alive & background balance scanner active.")
         httpd.serve_forever()
 
 if __name__ == '__main__':
