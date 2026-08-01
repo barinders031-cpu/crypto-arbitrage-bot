@@ -154,7 +154,7 @@ class LiveOrderExecutor:
         """
         await self._ensure_session()
         # Start with last known good values (overwritten if fetch succeeds)
-        d_bal = getattr(self, '_last_d_bal', 8.37)
+        d_bal = getattr(self, '_last_d_bal', 7.96)
         c_bal = getattr(self, '_last_c_bal', 9.31)
 
         # ── Delta Balance ──────────────────────────────────────────────────
