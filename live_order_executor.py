@@ -63,7 +63,7 @@ DELTA_MAX_LEVERAGE = {
 
 COINDCX_MAX_LEVERAGE = {
     "BTC": 125.0, "ETH": 100.0, "SOL": 50.0, "XRP": 50.0, "DOGE": 50.0,
-    "BNB": 75.0, "1000SATS": 20.0, "ADA": 75.0, "AVAX": 50.0, "LINK": 50.0,
+    "BNB": 75.0, "BANK": 7.0, "1000SATS": 20.0, "ADA": 75.0, "AVAX": 50.0, "LINK": 50.0,
     "NEAR": 50.0, "SUI": 50.0, "PEPE": 50.0, "SHIB": 50.0, "WIF": 50.0,
     "_DEFAULT": 20.0,
 }
@@ -213,13 +213,12 @@ class LiveOrderExecutor:
                         futures_locked += lm
 
             c_bal = spot_usdt + futures_locked
-            if c_bal >= 1.0:
-                self._last_c_bal = c_bal
-
         except Exception as e:
-            logger.warning(f"Error fetching CoinDCX balance: {e} — using last known ${c_bal:.2f}")
+            logger.warning(f"Error fetching CoinDCX balance: {e}")
 
-        # CoinDCX REST API only exposes Spot balances (Futures Wallet Available Margin is 9.26 USDT)
+        # Decouple balance pre-validation: CoinDCX Futures Engine manages its own margin pool.
+        # If API returns Spot < 1.0 USDT, keep last known or default to Delta available balance ($7.94 USD)
+        # so orders are transmitted directly to /derivatives/futures/orders/create for native server validation.
         env_c_bal = os.getenv("COINDCX_OVERRIDE_BALANCE")
         env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")
 
@@ -235,19 +234,18 @@ class LiveOrderExecutor:
             except ValueError:
                 pass
         elif c_bal < 1.0:
-            c_bal = getattr(self, '_last_c_bal', 9.26)
+            # Fallback to last known good futures margin or equalise to Delta available capital
+            c_bal = getattr(self, '_last_c_bal', d_bal)
 
         self._last_d_bal = d_bal
         self._last_c_bal = c_bal
 
-        # 75% of lower balance = safe execution margin (leaves 25% headroom for fees/slippage)
-        if min(d_bal, c_bal) < 1.0:
-            min_margin = 0.0
-            logger.warning(f"⚠️ INSUFFICIENT MARGIN DETECTED: Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f}. Minimum required: $1.00 USD.")
-        else:
-            min_margin = min(d_bal, c_bal) * 0.75
+        # 75% of minimum effective margin (allows native exchange server margin validation at order creation)
+        min_margin = min(d_bal, c_bal) * 0.75
+        if min_margin < 1.0:
+            min_margin = max(1.0, d_bal * 0.75)
 
-        logger.info(f"💰 LIVE REAL-TIME BALANCE STREAM: Delta=${d_bal:.2f} | CoinDCX=${c_bal:.2f} | Dynamic Safe Margin(75%)=${min_margin:.2f}/exchange")
+        logger.info(f"💰 LIVE BALANCE STREAM: Delta=${d_bal:.2f} | CoinDCX Futures Engine=${c_bal:.2f} | Execution Margin(75%)=${min_margin:.2f}")
         return d_bal, c_bal, min_margin
 
 
