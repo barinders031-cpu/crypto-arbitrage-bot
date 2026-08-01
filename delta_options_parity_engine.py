@@ -182,7 +182,9 @@ class DeltaOptionsParityEngine:
                             "put_sym": put["symbol"],
                             "futures_mark": S,
                             "call_ask": C,
+                            "call_bid": call["best_bid"],
                             "put_bid": P,
+                            "put_ask": put["best_ask"],
                             "gross_spread_pct": conversion_spread_pct,
                             "net_pnl_pct": net_conversion_pct,
                             "hours_to_exp": hours_to_exp,
@@ -199,7 +201,9 @@ class DeltaOptionsParityEngine:
                             "put_sym": put["symbol"],
                             "futures_mark": S,
                             "call_ask": C,
+                            "call_bid": call["best_bid"],
                             "put_bid": P,
+                            "put_ask": put["best_ask"],
                             "gross_spread_pct": reversal_spread_pct,
                             "net_pnl_pct": net_reversal_pct,
                             "hours_to_exp": hours_to_exp,
@@ -244,21 +248,33 @@ class DeltaOptionsParityEngine:
         logger.info(f"    Hours to Expiry  : {opp['hours_to_exp']:.2f} Hours")
         logger.info("=" * 80)
 
-        # Place 3-Legged Execution Orders on Delta Exchange India
+        # Place 3-Legged Execution Orders on Delta Exchange India (LIMIT ORDERS FOR OPTIONS)
         if opp["type"] == "CONVERSION":
-            # Leg 1: BUY Futures
-            fut_res = await self.executor._delta_order(opp["futures_sym"], "buy", lots, leverage=max_leverage)
-            # Leg 2: BUY Put Option
-            put_res = await self.executor._delta_order(opp["put_sym"], "buy", lots, leverage=max_leverage)
-            # Leg 3: SELL Call Option
-            call_res = await self.executor._delta_order(opp["call_sym"], "sell", lots, leverage=max_leverage)
+            # Leg 1: BUY Futures (Market / Limit Order at Futures Mark)
+            fut_res = await self.executor._delta_order(
+                opp["futures_sym"], "buy", lots, order_type="limit_order", limit_price=opp["futures_mark"]
+            )
+            # Leg 2: BUY Put Option (LIMIT ORDER at Put Ask)
+            put_res = await self.executor._delta_order(
+                opp["put_sym"], "buy", lots, order_type="limit_order", limit_price=opp["put_ask"]
+            )
+            # Leg 3: SELL Call Option (LIMIT ORDER at Call Bid)
+            call_res = await self.executor._delta_order(
+                opp["call_sym"], "sell", lots, order_type="limit_order", limit_price=opp["call_bid"]
+            )
         else: # REVERSAL
             # Leg 1: SELL Futures
-            fut_res = await self.executor._delta_order(opp["futures_sym"], "sell", lots, leverage=max_leverage)
-            # Leg 2: BUY Call Option
-            call_res = await self.executor._delta_order(opp["call_sym"], "buy", lots, leverage=max_leverage)
-            # Leg 3: SELL Put Option
-            put_res = await self.executor._delta_order(opp["put_sym"], "sell", lots, leverage=max_leverage)
+            fut_res = await self.executor._delta_order(
+                opp["futures_sym"], "sell", lots, order_type="limit_order", limit_price=opp["futures_mark"]
+            )
+            # Leg 2: BUY Call Option (LIMIT ORDER at Call Ask)
+            call_res = await self.executor._delta_order(
+                opp["call_sym"], "buy", lots, order_type="limit_order", limit_price=opp["call_ask"]
+            )
+            # Leg 3: SELL Put Option (LIMIT ORDER at Put Bid)
+            put_res = await self.executor._delta_order(
+                opp["put_sym"], "sell", lots, order_type="limit_order", limit_price=opp["put_bid"]
+            )
 
         # Register position for automatic Futures closure at option expiry
         position_record = {
