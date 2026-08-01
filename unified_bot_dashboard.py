@@ -1361,26 +1361,34 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
         <div class="grid-4">
             <div class="card">
-                <div class="card-label">Account Balance</div>
-                <div class="card-val text-green" id="val-balance">$10.00</div>
+                <div class="card-label">Delta Exchange Balance</div>
+                <div class="card-val text-green" id="val-delta-bal">$7.94</div>
+            </div>
+            <div class="card">
+                <div class="card-label">CoinDCX Futures Margin</div>
+                <div class="card-val text-cyan" id="val-coindcx-bal">$9.26</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Safe Execution Margin (75%)</div>
+                <div class="card-val text-yellow" id="val-margin-bal">$5.95</div>
             </div>
             <div class="card">
                 <div class="card-label">Funding Net PnL (USD)</div>
                 <div class="card-val text-green" id="val-pnl">+$0.0000</div>
             </div>
+        </div>
+        <div class="grid-4" style="margin-top: 0;">
             <div class="card">
                 <div class="card-label">Top Funding Difference</div>
                 <div class="card-val text-cyan" id="val-diff">0.0000%</div>
             </div>
-            <div class="card">
-                <div class="card-label">Execution Mode</div>
-                <div class="card-val" id="val-live-mode" style="font-size: 15px; margin-top: 5px; color: #ff4d4d;">PAPER 📄</div>
-            </div>
-        </div>
-        <div class="grid-4" style="margin-top: 0;">
             <div class="card" style="grid-column: span 2;">
                 <div class="card-label">Next Settlement Countdown</div>
                 <div class="card-val text-yellow" id="val-countdown" style="font-size: 16px; margin-top: 5px;">Calculating...</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Execution Mode</div>
+                <div class="card-val" id="val-live-mode" style="font-size: 15px; margin-top: 5px; color: #ff4d4d;">PAPER 📄</div>
             </div>
         </div>
 
@@ -1569,7 +1577,19 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 if (!data || !data.state) return;
 
                 // --- UPDATE ENGINE 1: FUNDING ARBITRAGE ---
-                document.getElementById('val-balance').innerText = data.state.real_balance_display || ('$' + (data.state.paper_wallet_balance || 10.0).toFixed(2));
+                const dBal = data.state.delta_balance || 7.94;
+                const cBal = data.state.coindcx_balance || 9.26;
+                const mBal = data.state.active_margin_per_exchange || ('$' + (Math.min(dBal, cBal) * 0.75).toFixed(2));
+                
+                const dBalEl = document.getElementById('val-delta-bal');
+                if (dBalEl) dBalEl.innerText = '$' + dBal.toFixed(2);
+                
+                const cBalEl = document.getElementById('val-coindcx-bal');
+                if (cBalEl) cBalEl.innerText = '$' + cBal.toFixed(2);
+                
+                const mBalEl = document.getElementById('val-margin-bal');
+                if (mBalEl) mBalEl.innerText = typeof mBal === 'string' && mBal.startsWith('$') ? mBal : ('$' + mBal);
+
                 const pnl = data.state.net_pnl_usd || 0.0;
                 const pnlEl = document.getElementById('val-pnl');
                 pnlEl.innerText = (pnl >= 0 ? '+' : '') + '$' + pnl.toFixed(4);
