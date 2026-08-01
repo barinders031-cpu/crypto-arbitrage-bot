@@ -78,3 +78,11 @@
   4. Match CoinDCX Sizing: Set CoinDCX Order Quantity = $Q_{exact}$ down to 0.0001 precision.
 - **Result:** $Q_{\text{Delta}} = +Q_{exact}$ and $Q_{\text{CoinDCX}} = -Q_{exact} \implies \text{Net Delta} = 0.0000$ (100% Perfect Market Price Protection).
 - **Margin Equalizer:** Both exchanges maintain matching margin allocation because physical crypto asset quantity is 100% identical!
+
+### 9. Dynamic 100% Full-Position Closure Protocol
+- **Core Principle:** Exit execution MUST guarantee 100% position closure with ZERO residual lots left open on either exchange.
+- **Dynamic Live Position Query Algorithm:**
+  1. Query live positions via `GET /v2/positions` on Delta Exchange India and `POST /exchange/v1/derivatives/futures/positions` on CoinDCX.
+  2. Extract exact active open sizes ($Q_{\text{open\_delta}}$ Lots, $Q_{\text{open\_coindcx}}$ Coins).
+  3. Transmit `reduce_only` market exit orders for 100% of $Q_{\text{open}}$ on each exchange so no residual lots or fractional coins remain active.
+

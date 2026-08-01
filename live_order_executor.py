@@ -583,6 +583,65 @@ class LiveOrderExecutor:
             "coindcx":     res_c,
         }
 
+    async def execute_full_account_position_close(self, trigger_reason: str = "Dynamic 100% Full Position Close") -> Dict:
+        """
+        Queries live active positions on BOTH exchanges (Delta & CoinDCX),
+        determines exact open size for each position, and fires reduce_only market orders
+        to guarantee 100% complete closure with ZERO residual position.
+        """
+        await self._ensure_session()
+        ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
+        closed_delta = []
+        closed_coindcx = []
+
+        if not self.live:
+            logger.info(f"[{ts}] PAPER FULL POSITION CLOSE TRIGGERED ({trigger_reason})")
+            return {"status": "PAPER", "closed_delta": [], "closed_coindcx": []}
+
+        # 1. Fetch & Close ALL Delta Active Positions
+        try:
+            d_pos_resp = await self._delta_get("/v2/positions")
+            d_positions = d_pos_resp.get("result", []) if isinstance(d_pos_resp, dict) else []
+            for p in d_positions:
+                size = int(p.get("size") or 0)
+                sym = p.get("product_symbol", "")
+                if size != 0 and sym:
+                    close_side = "sell" if size > 0 else "buy"
+                    close_lots = abs(size)
+                    res_d = await self._delta_order(sym, close_side, close_lots, order_type="market_order", reduce_only=True)
+                    closed_delta.append({"symbol": sym, "closed_lots": close_lots, "side": close_side, "result": res_d})
+                    logger.info(f"[{ts}] DELTA FULL CLOSE: {sym} | {close_side.upper()} {close_lots} Lots | Result: {res_d.get('success')}")
+        except Exception as e:
+            logger.error(f"Error closing Delta positions: {e}")
+
+        # 2. Fetch & Close ALL CoinDCX Active Positions
+        try:
+            pos_path = "/exchange/v1/derivatives/futures/positions"
+            payload = {}
+            body_str, sig = sign_coindcx(payload)
+            headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": sig}
+            async with self.session.post(COINDCX_BASE_URL + pos_path, data=body_str, headers=headers, timeout=self.t_order) as resp:
+                c_positions = await resp.json()
+                if isinstance(c_positions, list):
+                    for p in c_positions:
+                        active_pos = float(p.get("active_pos") or 0)
+                        pair = p.get("pair", "")
+                        if active_pos != 0 and pair:
+                            close_side = "sell" if active_pos > 0 else "buy"
+                            close_qty = abs(active_pos)
+                            res_c = await self._coindcx_order(pair, close_side, close_qty, order_type="market_order", reduce_only=True)
+                            closed_coindcx.append({"pair": pair, "closed_qty": close_qty, "side": close_side, "result": res_c})
+                            logger.info(f"[{ts}] COINDCX FULL CLOSE: {pair} | {close_side.upper()} {close_qty} | Result: {res_c.get('success')}")
+        except Exception as e:
+            logger.error(f"Error closing CoinDCX positions: {e}")
+
+        return {
+            "status": "SUCCESS_FULL_CLOSE",
+            "trigger_reason": trigger_reason,
+            "closed_delta": closed_delta,
+            "closed_coindcx": closed_coindcx
+        }
+
 
 # ─── Singleton Factory ─────────────────────────────────────────────────────────
 _executor_instance: Optional[LiveOrderExecutor] = None

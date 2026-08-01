@@ -1786,26 +1786,17 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
         elif self.path in ('/api/exit', '/api/close'):
             if _live_executor:
                 try:
-                    exit_result = run_async(_live_executor.execute_exit(
-                        delta_sym="ETHUSD",
-                        delta_side="SELL",
-                        delta_lots=2,
-                        coindcx_sym="B-ETH_USDT",
-                        coindcx_side="BUY",
-                        exact_qty=0.02,
-                        leverage=10,
-                        notional_usd=37.32,
-                        gross_spread_pct=0.15,
-                        trigger_reason="User Manual Exit Request via Render Web API"
+                    exit_result = run_async(_live_executor.execute_full_account_position_close(
+                        trigger_reason="User Manual 100% Full Exit Request via Render Web API"
                     ))
-                    add_log(f"⚡ [LIVE EXIT FIRED FROM RENDER API] Result: {exit_result}")
+                    add_log(f"⚡ [LIVE 100% FULL EXIT FIRED FROM RENDER API] Result: {exit_result}")
                     self.send_response(200)
                     self.send_header('Content-Type', 'application/json')
                     self.end_headers()
                     self.wfile.write(json.dumps({"status": "ok", "exit_result": exit_result}, default=str).encode('utf-8'))
                     return
                 except Exception as _ex:
-                    add_log(f"❌ Error executing live exit from Render API: {_ex}")
+                    add_log(f"❌ Error executing live 100% exit from Render API: {_ex}")
                     self.send_response(500)
                     self.send_header('Content-Type', 'application/json')
                     self.end_headers()
