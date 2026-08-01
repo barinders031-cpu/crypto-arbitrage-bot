@@ -55,7 +55,7 @@ LOT_SIZES = {
 
 # Symmetric Max Leverage Tables (AGENTS.md Rule 1)
 DELTA_MAX_LEVERAGE = {
-    "BTC": 100.0, "ETH": 100.0, "SOL": 50.0, "XRP": 50.0, "DOGE": 50.0,
+    "BTC": 200.0, "ETH": 200.0, "SOL": 50.0, "XRP": 50.0, "DOGE": 50.0,
     "BNB": 50.0, "1000SATS": 50.0, "ADA": 50.0, "AVAX": 50.0, "LINK": 50.0,
     "NEAR": 50.0, "SUI": 50.0, "PEPE": 50.0, "SHIB": 50.0, "WIF": 50.0,
     "_DEFAULT": 20.0,

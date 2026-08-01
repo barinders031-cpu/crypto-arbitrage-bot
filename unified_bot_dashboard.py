@@ -1589,7 +1589,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             </div>
             <div class="card">
                 <div class="card-label">Max Leverage Cap</div>
-                <div class="card-val text-cyan" id="opt-val-leverage">100x (BTC/ETH)</div>
+                <div class="card-val text-cyan" id="opt-val-leverage">200x (BTC/ETH)</div>
             </div>
             <div class="card">
                 <div class="card-label">Expiry Auto-Close Status</div>

@@ -225,8 +225,8 @@ class DeltaOptionsParityEngine:
         coin = opp["coin"]
         futures_mark = opp["futures_mark"]
         
-        # Max Leverage: 100x for BTC/ETH, 50x for XAUT
-        max_leverage = 100 if coin in ["BTC", "ETH"] else 50
+        # Max Leverage: 200x for BTC/ETH Options & Futures, 100x for XAUT
+        max_leverage = 200 if coin in ["BTC", "ETH"] else 100
         notional_usd = active_capital * max_leverage
 
         lot_size = LOT_SIZES.get(coin, 1.0)
