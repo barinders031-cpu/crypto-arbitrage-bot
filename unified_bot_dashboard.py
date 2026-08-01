@@ -1072,9 +1072,36 @@ def self_ping_loop():
                 add_log("ℹ️ [KEEP-ALIVE] RENDER_EXTERNAL_URL not set — add it in Render Environment to enable auto-ping.")
         time.sleep(600)  # Ping every 10 minutes (Render spins down after 15min inactivity)
 
+options_parity_logs = []
+options_parity_engine = None
+
+def options_parity_background_loop():
+    """Background worker that continuously scans Delta India Options Put-Call Parity opportunities for BTC, ETH, XAUT."""
+    global options_parity_engine
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    if _live_executor:
+        options_parity_engine = DeltaOptionsParityEngine(_live_executor)
+    
+    while True:
+        try:
+            if options_parity_engine:
+                products, ticker_map = loop.run_until_complete(options_parity_engine.fetch_delta_products_and_tickers())
+                opps = options_parity_engine.scan_parity_opportunities(products, ticker_map)
+                bot_state["options_parity_opportunities"] = opps
+                bot_state["options_parity_last_scan"] = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
+                
+                # Check and auto-close Futures leg upon option expiry settlement
+                loop.run_until_complete(options_parity_engine.monitor_and_autoclose_at_expiry())
+        except Exception as e:
+            add_log(f"⚠️ Options Parity loop error: {e}")
+        time.sleep(5)  # Scan every 5 seconds
+
 # Start all background workers
 threading.Thread(target=bot_background_loop, daemon=True).start()
 threading.Thread(target=triangular_background_loop, daemon=True).start()
+threading.Thread(target=options_parity_background_loop, daemon=True).start()
 threading.Thread(target=self_ping_loop, daemon=True).start()
 
 # ==============================================================================
@@ -1540,6 +1567,62 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                     </table>
                 </div>
             </div>
+        <!-- ============================================================================== -->
+        <!-- DIVIDER & SECTION 3: DELTA EXCHANGE INDIA OPTIONS PUT-CALL PARITY ARBITRAGE -->
+        <!-- ============================================================================== -->
+        <hr class="section-divider">
+
+        <div class="section-header">
+            <div class="section-title">
+                🎯 SECTION 3: DELTA EXCHANGE INDIA OPTIONS PUT-CALL PARITY ARBITRAGE
+                <span class="engine-tag tag-funding">DELTA INDIA (BTC, ETH, XAUT OPTIONS)</span>
+            </div>
+            <div style="font-size: 12px; color: var(--text-muted);" id="options-scan-time">Last Scan: Just Now</div>
+        </div>
+
+        <div class="grid-4">
+            <div class="card">
+                <div class="card-label">Active Options Margin (75%)</div>
+                <div class="card-val text-green" id="opt-val-margin">$5.95</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Max Leverage Cap</div>
+                <div class="card-val text-cyan" id="opt-val-leverage">100x (BTC/ETH)</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Expiry Auto-Close Status</div>
+                <div class="card-val text-yellow" id="opt-val-status" style="font-size: 15px; margin-top: 5px;">AUTOMATIC ⚡</div>
+            </div>
+            <div class="card">
+                <div class="card-label">Supported Assets</div>
+                <div class="card-val text-purple" style="font-size: 15px; margin-top: 5px;">BTC, ETH, XAUT</div>
+            </div>
+        </div>
+
+        <div class="section-header">
+            <div class="section-title" style="font-size: 14px;">Live Options Put-Call Parity Opportunities (C - P = S - K)</div>
+            <span style="font-size: 11px; color: var(--text-muted);">Fee Gate: Net Spread &ge; 0.15% | Early Expiry Contracts</span>
+        </div>
+
+        <div class="table-container">
+            <table>
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>Coin</th>
+                        <th>Parity Type</th>
+                        <th>Strike Price</th>
+                        <th>Futures Mark</th>
+                        <th>Call Ask / Put Bid</th>
+                        <th>Net Parity Spread</th>
+                        <th>Hours to Expiry</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody id="options-parity-rows">
+                    <tr><td colspan="9" style="text-align: center; color: var(--text-muted);">Scanning live Delta Exchange India options & futures order books...</td></tr>
+                </tbody>
+            </table>
         </div>
 
     </div>
@@ -1693,6 +1776,34 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                             <td class="text-cyan">${t.balance}</td>
                         </tr>
                     `).join('');
+                }
+
+                // --- UPDATE ENGINE 3: DELTA EXCHANGE INDIA OPTIONS PUT-CALL PARITY ---
+                const optScanEl = document.getElementById('options-scan-time');
+                if (optScanEl) optScanEl.innerText = 'Last Scan: ' + (data.state.options_parity_last_scan || 'Just Now');
+
+                const optMarginEl = document.getElementById('opt-val-margin');
+                if (optMarginEl) optMarginEl.innerText = '$' + ((data.state.delta_balance || 7.94) * 0.75).toFixed(2);
+
+                const optBody = document.getElementById('options-parity-rows');
+                if (optBody && data.state.options_parity_opportunities) {
+                    if (data.state.options_parity_opportunities.length > 0) {
+                        optBody.innerHTML = data.state.options_parity_opportunities.map((item, idx) => `
+                            <tr>
+                                <td><strong>${idx + 1}</strong></td>
+                                <td><strong class="text-cyan">${item.coin}</strong></td>
+                                <td><span class="badge-action">${item.type}</span></td>
+                                <td>$${item.strike.toFixed(2)}</td>
+                                <td>$${item.futures_mark.toFixed(2)}</td>
+                                <td style="font-size:12px;">Call $${item.call_ask.toFixed(2)} / Put $${item.put_bid.toFixed(2)}</td>
+                                <td><strong class="text-green">+${item.net_pnl_pct.toFixed(4)}%</strong></td>
+                                <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">${item.hours_to_exp.toFixed(2)} Hours</td>
+                                <td><span class="badge-ex">${item.action}</span></td>
+                            </tr>
+                        `).join('');
+                    } else {
+                        optBody.innerHTML = '<tr><td colspan="9" style="text-align: center; color: var(--text-muted);">Scanning live Delta options order books (Fee Gate &ge; 0.15% Net)...</td></tr>';
+                    }
                 }
 
             } catch (err) {

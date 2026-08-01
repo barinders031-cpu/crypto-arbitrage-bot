@@ -79,10 +79,28 @@
 - **Result:** $Q_{\text{Delta}} = +Q_{exact}$ and $Q_{\text{CoinDCX}} = -Q_{exact} \implies \text{Net Delta} = 0.0000$ (100% Perfect Market Price Protection).
 - **Margin Equalizer:** Both exchanges maintain matching margin allocation because physical crypto asset quantity is 100% identical!
 
-### 9. Dynamic 100% Full-Position Closure Protocol
-- **Core Principle:** Exit execution MUST guarantee 100% position closure with ZERO residual lots left open on either exchange.
-- **Dynamic Live Position Query Algorithm:**
-  1. Query live positions via `GET /v2/positions` on Delta Exchange India and `POST /exchange/v1/derivatives/futures/positions` on CoinDCX.
-  2. Extract exact active open sizes ($Q_{\text{open\_delta}}$ Lots, $Q_{\text{open\_coindcx}}$ Coins).
-  3. Transmit `reduce_only` market exit orders for 100% of $Q_{\text{open}}$ on each exchange so no residual lots or fractional coins remain active.
+### 10. Delta Exchange India Options Put-Call Parity Arbitrage Protocol
+- **Target Exchange:** Strictly **Delta Exchange India** (`https://api.india.delta.exchange`).
+- **Supported Assets:** `BTC`, `ETH`, and `XAUT` Options & Futures.
+- **Expiry Selection:** Nearest / Earliest Expiry Options (Daily & Weekly contracts).
+- **Put-Call Parity Mathematical Formula:**
+  $$\text{Parity Spread} = (C - P) - (S - K)$$
+  - Where $C$ = Call Price, $P$ = Put Price, $S$ = Futures Mark Price, $K$ = Option Strike Price.
+- **Trade Execution Triggers (Fee-Adjusted Net Gate $\ge 0.15\%$):**
+  - **Conversion Arbitrage (Call Overpriced):**
+    - If $(C - P) - (S - K) > 0.0015 \times S$:
+    - **BUY Futures ($S$)** at Max Leverage (`100x` BTC/ETH)
+    - **BUY Put Option ($P$)**
+    - **SELL Call Option ($C$)**
+  - **Reversal Arbitrage (Put Overpriced):**
+    - If $(S - K) - (C - P) > 0.0015 \times S$:
+    - **SELL Futures ($S$)** at Max Leverage (`100x` BTC/ETH)
+    - **BUY Call Option ($C$)**
+    - **SELL Put Option ($P$)**
+- **Margin Allocation:** Maximize leverage (100x) using **75% of available Delta Balance** ($0.75 \times \text{Balance}_{\text{Delta}}$).
+- **Automatic Expiry Settlement & Futures Closure:**
+  - Hold options position until Option Expiry timestamp.
+  - At option settlement, options auto-settle on exchange.
+  - **Automatic Futures Closure:** Engine immediately fires a `reduce_only` market order to close the corresponding Futures leg simultaneously, locking 100% net parity profit.
+
 
