@@ -44,20 +44,32 @@ except Exception:
         logger.info(f"Telegram Alert: {msg}")
         return True
 
-try:
-    from unified_bot_dashboard import (
-        HTML_DASHBOARD, bot_state, live_logs, paper_history,
-        triangular_logs, triangular_history, add_log, CONFIG_FILE
-    )
-except Exception as _dash_import_err:
-    HTML_DASHBOARD = "<html><body><h1>Dashboard Loading...</h1></body></html>"
-    bot_state = {"status": "ACTIVE", "live_mode": "LIVE 🔴" if LIVE_EXECUTION else "PAPER 📄"}
-    live_logs = []
-    paper_history = []
-    triangular_logs = []
-    triangular_history = []
-    def add_log(msg): logger.info(msg)
-    CONFIG_FILE = "telegram_config.json"
+from dashboard_template import HTML_DASHBOARD
+
+bot_state = {
+    "status": "DUAL-LEG HFT ARBITRAGE ACTIVE",
+    "live_mode": "LIVE 🔴" if LIVE_EXECUTION else "PAPER 📄",
+    "paper_wallet_balance": 17.20,
+    "total_trades": 0,
+    "net_pnl_usd": 0.0,
+    "last_scan_time": "-",
+    "active_top_coin": "-",
+    "top_gross_spread": "-",
+    "real_balance_display": "Delta: $7.94 | CoinDCX: $9.26 | Total: $17.20"
+}
+live_logs = []
+paper_history = []
+triangular_logs = []
+triangular_history = []
+CONFIG_FILE = "telegram_config.json"
+
+
+def add_log(msg: str):
+    logger.info(msg)
+    ts = datetime.datetime.now().strftime("%H:%M:%S")
+    live_logs.insert(0, f"[{ts}] {msg}")
+    if len(live_logs) > 100:
+        live_logs.pop()
 
 
 async def handle_index(request):
