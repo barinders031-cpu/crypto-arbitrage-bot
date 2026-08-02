@@ -44,6 +44,106 @@ except Exception:
         logger.info(f"Telegram Alert: {msg}")
         return True
 
+try:
+    from unified_bot_dashboard import (
+        HTML_DASHBOARD, bot_state, live_logs, paper_history,
+        triangular_logs, triangular_history, add_log, CONFIG_FILE
+    )
+except Exception as _dash_import_err:
+    HTML_DASHBOARD = "<html><body><h1>Dashboard Loading...</h1></body></html>"
+    bot_state = {"status": "ACTIVE", "live_mode": "LIVE 🔴" if LIVE_EXECUTION else "PAPER 📄"}
+    live_logs = []
+    paper_history = []
+    triangular_logs = []
+    triangular_history = []
+    def add_log(msg): logger.info(msg)
+    CONFIG_FILE = "telegram_config.json"
+
+
+async def handle_index(request):
+    """Serve full colourful HTML Web Dashboard for browser requests."""
+    accept = request.headers.get("Accept", "")
+    if "text/html" in accept or "application/json" not in accept or request.query.get("html") == "1":
+        return web.Response(text=HTML_DASHBOARD, content_type="text/html", headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        })
+    return await handle_health(request)
+
+
+async def handle_api_state(request):
+    """Return live dashboard state JSON for frontend updates."""
+    try:
+        if hasattr(engine, 'executor') and engine.executor:
+            d_bal = engine.executor._last_d_bal or 7.94
+            c_bal = engine.executor._last_c_bal or 9.26
+            bot_state["delta_balance"] = d_bal
+            bot_state["coindcx_balance"] = c_bal
+            bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX: ${c_bal:.2f} | Total: ${d_bal+c_bal:.2f}"
+    except Exception:
+        pass
+    payload = {
+        "state": bot_state,
+        "logs": live_logs,
+        "history": paper_history,
+        "triangular_logs": triangular_logs,
+        "triangular_history": triangular_history
+    }
+    return web.json_response(payload)
+
+
+async def handle_api_entry(request):
+    try:
+        data = await request.json()
+    except Exception:
+        data = {}
+    coin = data.get("coin", "ETH").upper()
+    res = await engine.execute_hft_parallel_entry({
+        "coin": coin,
+        "delta_sym": f"{coin}USD",
+        "delta_side": "SELL",
+        "coindcx_sym": f"B-{coin}_USDT",
+        "coindcx_side": "BUY",
+        "gross_spread_pct": 0.20,
+        "gate": "ACCEPT"
+    })
+    add_log(f"⚡ [MANUAL ENTRY FIRED VIA WEB DASHBOARD] Result: {res}")
+    return web.json_response({"status": "ok", "entry_result": res})
+
+
+async def handle_api_exit(request):
+    res = await engine.execute_hft_parallel_exit(engine.active_positions, trigger_reason="Manual Web Exit Request")
+    add_log(f"⚡ [MANUAL EXIT FIRED VIA WEB DASHBOARD] Result: {res}")
+    return web.json_response({"status": "ok", "exit_result": res})
+
+
+async def handle_api_balance(request):
+    try:
+        data = await request.json()
+        c_bal = data.get("coindcx_balance")
+        d_bal = data.get("delta_balance")
+        if c_bal is not None:
+            os.environ["COINDCX_OVERRIDE_BALANCE"] = str(float(c_bal))
+        if d_bal is not None:
+            os.environ["DELTA_OVERRIDE_BALANCE"] = str(float(d_bal))
+    except Exception:
+        pass
+    return web.json_response({"status": "ok"})
+
+
+async def handle_api_telegram(request):
+    try:
+        data = await request.json()
+        bot_token = data.get("bot_token", "").strip()
+        chat_id = data.get("chat_id", "").strip()
+        with open(CONFIG_FILE, "w") as f:
+            json.dump({"bot_token": bot_token, "chat_id": chat_id, "enabled": True}, f, indent=2)
+        send_telegram_alert("🔔 *Telegram Trade Notification Linked to Web Dashboard!*")
+        return web.json_response({"status": "ok", "chat_id": chat_id})
+    except Exception as e:
+        return web.json_response({"status": "error", "message": str(e)}, status=500)
+
 
 async def handle_health(request):
     """Health check endpoint for Render.com."""
@@ -264,10 +364,18 @@ async def cleanup_background_tasks(app):
 
 def create_app():
     app = web.Application()
-    app.router.add_get("/", handle_health)
+    app.router.add_get("/", handle_index)
+    app.router.add_get("/dashboard", handle_index)
     app.router.add_get("/health", handle_health)
     app.router.add_get("/status", handle_status)
     app.router.add_get("/ping", handle_ping)
+    app.router.add_get("/api/state", handle_api_state)
+    app.router.add_post("/api/entry", handle_api_entry)
+    app.router.add_post("/api/trade", handle_api_entry)
+    app.router.add_post("/api/exit", handle_api_exit)
+    app.router.add_post("/api/close", handle_api_exit)
+    app.router.add_post("/api/balance", handle_api_balance)
+    app.router.add_post("/api/telegram", handle_api_telegram)
     setup_diag(app)
 
     app.on_startup.append(start_background_tasks)
