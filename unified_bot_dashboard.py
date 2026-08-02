@@ -56,8 +56,10 @@ try:
     _live_executor = get_executor()
 except Exception as _live_import_err:
     print(f"[WARNING] live_order_executor import failed: {_live_import_err}. Running in paper mode.")
-    LIVE_EXECUTION = False
-    _live_executor = None
+try:
+    from delta_options_parity_engine import DeltaOptionsParityEngine
+except Exception as _parity_import_err:
+    DeltaOptionsParityEngine = None
 
 # Enforce UTF-8 encoding for Windows terminal compatibility
 if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
