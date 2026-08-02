@@ -155,20 +155,20 @@ async def continuous_funding_scheduler():
 
     while True:
         try:
-            now = datetime.datetime.now()
-            # 8-hour funding windows (05:28 - 05:30, 13:28 - 13:30, 21:28 - 21:30 IST)
-            funding_hours = [5, 13, 21]
-            is_pre_funding = (now.hour in funding_hours and now.minute >= 28 and now.minute <= 29) or (now.minute == 58 or now.minute == 59)
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            # Pre-funding window triggers T-2 min before funding settlements (:00 or :30)
+            is_pre_funding = now_utc.minute in (28, 29, 58, 59)
+            funding_window_id = f"{now_utc.strftime('%Y-%m-%d_%H')}_{(now_utc.minute // 30)}"
 
-            if is_pre_funding and engine.last_executed_funding_hour != now.hour:
-                logger.info(f"⚡ PRE-FUNDING WINDOW DETECTED ({now.strftime('%H:%M:%S IST')})! Scanning #1 top opportunity...")
+            if is_pre_funding and getattr(engine, "last_executed_window_id", None) != funding_window_id:
+                logger.info(f"⚡ PRE-FUNDING WINDOW DETECTED (UTC {now_utc.strftime('%H:%M:%S')})! Scanning #1 top opportunity...")
                 opp = await engine.scan_top_opportunity()
                 
                 if opp:
                     logger.info(f"   Top Coin: {opp['coin']} | Gross Spread: {opp['gross_spread_pct']:.4f}% | Net Profit: {opp['net_profit_pct']:+.4f}% | Gate: {opp['gate']}")
                     
                     if opp["gate"] == "ACCEPT":
-                        engine.last_executed_funding_hour = now.hour
+                        engine.last_executed_window_id = funding_window_id
                         
                         send_telegram_alert(
                             f"⚡ *PRE-FUNDING ENTRY TRIGGERED*\n\n"
@@ -185,14 +185,13 @@ async def continuous_funding_scheduler():
                         logger.info(f"   Parallel Entry Result: {entry_res}")
                         
                         if "SUCCESS" in entry_res.get("status", ""):
-                            # Step 2: Wait until exact funding timestamp (00:00:00) + 2 seconds
-                            next_funding_hour = ((now.hour // 8) + 1) * 8
-                            if next_funding_hour >= 24:
-                                next_funding_dt = (now + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=2, microsecond=0)
+                            # Step 2: Calculate target funding settlement time (next :00 or :30 + 2s)
+                            if now_utc.minute >= 30:
+                                target_dt = (now_utc + datetime.timedelta(hours=1)).replace(minute=0, second=2, microsecond=0)
                             else:
-                                next_funding_dt = now.replace(hour=next_funding_hour, minute=0, second=2, microsecond=0)
+                                target_dt = now_utc.replace(minute=30, second=2, microsecond=0)
 
-                            wait_sec = (next_funding_dt - datetime.datetime.now()).total_seconds()
+                            wait_sec = (target_dt - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
                             if 0 < wait_sec < 180:
                                 logger.info(f"⏳ Waiting {wait_sec:.2f}s for Funding Snapshot & T+2s Scalper Exit...")
                                 await asyncio.sleep(wait_sec)
