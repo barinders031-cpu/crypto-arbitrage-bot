@@ -8,6 +8,7 @@ Runs continuous 24/7 HFT Dual-Leg Funding Engine + Keep-Alive worker.
 import os
 import sys
 import time
+import json
 import asyncio
 import datetime
 import urllib.request
@@ -72,6 +73,53 @@ async def handle_status(request):
 
 async def handle_ping(request):
     return web.Response(text="PONG", status=200)
+
+
+async def handle_diag(request):
+    """Secure sanitized diagnostics endpoint for Render Cloud monitoring."""
+    token = request.headers.get("x-diag-token", "")
+    expected_token = os.getenv("DIAG_TOKEN", "delta_hft_diag_2026")
+    if token != expected_token and request.query.get("token") != expected_token:
+        return web.json_response({"error": "unauthorized"}, status=401)
+
+    state = {}
+    try:
+        if os.path.exists("bot_state_persistent.json"):
+            with open("bot_state_persistent.json", "r") as f:
+                s = json.load(f)
+                for k, v in s.items():
+                    if "history" in k.lower(): continue
+                    state[k] = v
+    except Exception as e:
+        state["error"] = str(e)
+
+    local_epoch = time.time()
+    try:
+        import requests
+        ip = requests.get("https://api.ipify.org", timeout=3).text.strip()
+    except Exception:
+        ip = "ip-fetch-failed"
+
+    delta_ts = None
+    try:
+        import requests
+        r = requests.get("https://api.india.delta.exchange/v2/tickers/BTCUSD", timeout=5).json()
+        delta_ts = int(r.get("result", {}).get("timestamp", 0)) / 1_000_000.0
+    except Exception:
+        pass
+
+    payload = {
+        "os": os.uname().sysname if hasattr(os, "uname") else os.name,
+        "cwd": os.getcwd(),
+        "local_epoch": local_epoch,
+        "delta_epoch": delta_ts,
+        "time_diff_seconds": round(local_epoch - delta_ts, 4) if delta_ts else None,
+        "public_ip": ip,
+        "env_keys": [k for k in os.environ.keys() if k.upper().startswith(("DELTA_", "LIVE_", "RENDER", "TELEGRAM", "COINDCX_"))],
+        "live_execution": os.getenv("LIVE_EXECUTION", "true"),
+        "sanitized_state": state
+    }
+    return web.json_response(payload)
 
 
 async def self_ping_worker():
@@ -220,6 +268,7 @@ def create_app():
     app.router.add_get("/health", handle_health)
     app.router.add_get("/status", handle_status)
     app.router.add_get("/ping", handle_ping)
+    app.router.add_get("/_diag", handle_diag)
 
     app.on_startup.append(start_background_tasks)
     app.on_cleanup.append(cleanup_background_tasks)
