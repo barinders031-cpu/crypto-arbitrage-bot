@@ -1917,21 +1917,21 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(json.dumps({"status": "error", "message": "LiveOrderExecutor not available"}).encode('utf-8'))
 
     def _handle_test_coindcx(self):
-        """Executes a standalone CoinDCX Futures test market order (1.0 XRP = ~$1.08 Notional) and auto-closes immediately."""
+        """Executes a standalone CoinDCX Futures test market order (6.0 XRP = ~$6.50 Notional >= 6.0 USDT min rule) and auto-closes immediately."""
         if _live_executor:
             try:
-                add_log("🧪 [RENDER API TEST] Triggering standalone CoinDCX Futures test trade (1.0 B-XRP_USDT BUY)...")
+                add_log("🧪 [RENDER API TEST] Triggering standalone CoinDCX Futures test trade (6.0 B-XRP_USDT BUY for >6.0 USDT min order rule)...")
                 c_order = run_async(_live_executor._coindcx_order(
                     symbol="B-XRP_USDT",
                     side="buy",
-                    qty=1.0,
+                    qty=6.0,
                     order_type="market_order",
                     leverage=20
                 ))
                 c_close = run_async(_live_executor._coindcx_order(
                     symbol="B-XRP_USDT",
                     side="sell",
-                    qty=1.0,
+                    qty=6.0,
                     order_type="market_order",
                     leverage=20,
                     reduce_only=True
@@ -1940,7 +1940,8 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                     "status": "ok",
                     "exchange": "CoinDCX Futures",
                     "symbol": "B-XRP_USDT",
-                    "qty": 1.0,
+                    "qty": 6.0,
+                    "notional_usdt": "~6.50",
                     "test_order": c_order,
                     "auto_close": c_close
                 }

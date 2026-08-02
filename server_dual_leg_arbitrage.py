@@ -491,19 +491,19 @@ async def handle_test_xrp(request):
 
 
 async def handle_test_coindcx(request):
-    """Executes a standalone CoinDCX Futures test market order (1.0 XRP = ~$1.08 Notional) and auto-closes immediately."""
+    """Executes a standalone CoinDCX Futures test market order (6.0 XRP = ~$6.50 Notional >= 6.0 USDT min rule) and auto-closes immediately."""
     try:
-        add_log("🧪 [RENDER API TEST] Triggering standalone CoinDCX Futures test trade (1.0 B-XRP_USDT BUY)...")
+        add_log("🧪 [RENDER API TEST] Triggering standalone CoinDCX Futures test trade (6.0 B-XRP_USDT BUY for >6.0 USDT min order rule)...")
         if not hasattr(engine, 'executor') or engine.executor is None:
             from live_order_executor import LiveOrderExecutor
             engine.executor = LiveOrderExecutor()
             await engine.executor._ensure_session()
 
-        # Step 1: Standalone CoinDCX Buy Order (1.0 XRP)
+        # Step 1: Standalone CoinDCX Buy Order (6.0 XRP = ~$6.50 Notional > 6.0 USDT rule)
         c_order = await engine.executor._coindcx_order(
             symbol="B-XRP_USDT",
             side="buy",
-            qty=1.0,
+            qty=6.0,
             order_type="market_order",
             leverage=20
         )
@@ -512,7 +512,7 @@ async def handle_test_coindcx(request):
         c_close = await engine.executor._coindcx_order(
             symbol="B-XRP_USDT",
             side="sell",
-            qty=1.0,
+            qty=6.0,
             order_type="market_order",
             leverage=20,
             reduce_only=True
@@ -522,7 +522,8 @@ async def handle_test_coindcx(request):
             "status": "ok",
             "exchange": "CoinDCX Futures",
             "symbol": "B-XRP_USDT",
-            "qty": 1.0,
+            "qty": 6.0,
+            "notional_usdt": "~6.50",
             "test_order": c_order,
             "auto_close": c_close
         }
