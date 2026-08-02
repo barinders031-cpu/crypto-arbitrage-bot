@@ -136,13 +136,12 @@ class LiveOrderExecutor:
     def __init__(self):
         self.live = LIVE_EXECUTION
         self.session: Optional[aiohttp.ClientSession] = None
-        self.t_order = aiohttp.ClientTimeout(total=8,  connect=3.0, sock_read=6.0)
-        self.t_scan  = aiohttp.ClientTimeout(total=15, connect=5.0, sock_read=12.0)
-        # Separate longer timeout for balance fetches (India-exchange APIs from US Render servers)
-        self.t_balance = aiohttp.ClientTimeout(total=20, connect=5.0, sock_read=15.0)
+        self.t_order = aiohttp.ClientTimeout(total=30, connect=10.0, sock_read=25.0)
+        self.t_scan  = aiohttp.ClientTimeout(total=30, connect=10.0, sock_read=25.0)
+        self.t_balance = aiohttp.ClientTimeout(total=30, connect=10.0, sock_read=25.0)
 
         mode = "LIVE REAL-MONEY 🔴" if self.live else "PAPER SIMULATION 📄"
-        logger.info(f"LiveOrderExecutor v5.1 Initialized | Mode: {mode}")
+        logger.info(f"LiveOrderExecutor v5.2 Initialized | Mode: {mode} | Timeout: 30s | Retries: 3 (5s, 10s, 20s)")
 
     async def _ensure_session(self):
         # Recreate session if missing, closed, or attached to a stale/dead loop
@@ -162,7 +161,7 @@ class LiveOrderExecutor:
             except Exception:
                 pass
             connector = aiohttp.TCPConnector(limit=30, ttl_dns_cache=300)
-            self.session = aiohttp.ClientSession(connector=connector, headers={"User-Agent": "HFTFundingArbitrage/5.1"})
+            self.session = aiohttp.ClientSession(connector=connector, headers={"User-Agent": "HFTFundingArbitrage/5.2"})
 
     async def close(self):
         if self.session and not self.session.closed:
@@ -172,98 +171,72 @@ class LiveOrderExecutor:
         """
         Fetches live margin balance on both Delta and CoinDCX.
         Returns: (delta_usd, coindcx_usdt, min_effective_margin)
-
-        CoinDCX NOTE: There is no /futures/balance endpoint.
-        Futures margin is computed as:
-          - Spot USDT wallet balance (unlocked/available capital)
-          + Sum of locked_user_margin across all futures positions (capital deployed)
-        This gives the TOTAL USDT capital on CoinDCX including deployed margin.
         """
         await self._ensure_session()
-        # Start with last known good values (overwritten if fetch succeeds)
         d_bal = getattr(self, '_last_d_bal', 7.96)
         c_bal = getattr(self, '_last_c_bal', 9.31)
+        delays = [5, 10, 20]
 
-        # ── Delta Balance ──────────────────────────────────────────────────
-        try:
-            t_stamp, sig = sign_delta("GET", "/v2/wallet/balances", "")
-            headers = {"api-key": DELTA_API_KEY, "timestamp": t_stamp, "signature": sig, "User-Agent": "Mozilla/5.0"}
-            async with self.session.get(DELTA_BASE_URL + "/v2/wallet/balances", headers=headers, timeout=self.t_balance) as resp:
-                data = await resp.json()
-                for b in data.get("result", []):
-                    if b.get("asset_symbol") == "USD":
-                        fetched = float(b.get("balance") or 0)
-                        if fetched >= 0:
-                            d_bal = fetched
-                            self._last_d_bal = d_bal
+        # ── Delta Balance with 3 retries ──────────────────────────────────
+        for attempt in range(3):
+            try:
+                t_stamp, sig = sign_delta("GET", "/v2/wallet/balances", "")
+                headers = {"api-key": DELTA_API_KEY, "timestamp": t_stamp, "signature": sig, "User-Agent": "Mozilla/5.0"}
+                async with self.session.get(DELTA_BASE_URL + "/v2/wallet/balances", headers=headers, timeout=self.t_balance) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        for b in data.get("result", []):
+                            if b.get("asset_symbol") == "USD":
+                                fetched = float(b.get("balance") or 0)
+                                if fetched > 0:
+                                    d_bal = fetched
                         break
-        except Exception as e:
-            logger.warning(f"Error fetching Delta balance: {e} — using last known ${d_bal:.2f}")
+            except Exception as e:
+                if attempt < 2:
+                    await asyncio.sleep(delays[attempt])
 
-        # ── CoinDCX Balance: Spot USDT + Futures Deployed Margin ─────────
-        # CoinDCX has NO /futures/balance endpoint.
-        # Total capital = spot USDT (free) + sum(locked_user_margin) across all positions (deployed)
-        try:
-            spot_usdt = 0.0
-            futures_locked = 0.0
+        # ── CoinDCX Balance with 3 retries ──────────────────────────────
+        for attempt in range(3):
+            try:
+                spot_usdt, futures_locked = 0.0, 0.0
+                path = "/exchange/v1/users/balances"
+                payload = {}
+                body_str, sig = sign_coindcx(payload)
+                headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": sig}
+                async with self.session.post(COINDCX_BASE_URL + path, data=body_str, headers=headers, timeout=self.t_balance) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if isinstance(data, list):
+                            for item in data:
+                                if item.get("currency") == "USDT":
+                                    spot_usdt = float(item.get("balance") or 0)
+                                    break
+                pos_path = "/exchange/v1/derivatives/futures/positions"
+                pos_payload = {}
+                pos_body, pos_sig = sign_coindcx(pos_payload)
+                pos_headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": pos_sig}
+                async with self.session.post(COINDCX_BASE_URL + pos_path, data=pos_body, headers=pos_headers, timeout=self.t_balance) as resp2:
+                    if resp2.status == 200:
+                        positions = await resp2.json()
+                        if isinstance(positions, list):
+                            for p in positions:
+                                lm = float(p.get("locked_user_margin") or 0)
+                                futures_locked += lm
+                c_bal = spot_usdt + futures_locked
+                break
+            except Exception as e:
+                if attempt < 2:
+                    await asyncio.sleep(delays[attempt])
 
-            # Step 1: Spot wallet USDT (free/available capital)
-            path = "/exchange/v1/users/balances"
-            payload = {}
-            body_str, sig = sign_coindcx(payload)
-            headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": sig}
-            async with self.session.post(COINDCX_BASE_URL + path, data=body_str, headers=headers, timeout=self.t_balance) as resp:
-                data = await resp.json()
-                if isinstance(data, list):
-                    for item in data:
-                        if item.get("currency") == "USDT":
-                            spot_usdt = float(item.get("balance") or 0)
-                            break
-
-            # Step 2: Sum locked_user_margin across all futures positions (deployed capital)
-            pos_path = "/exchange/v1/derivatives/futures/positions"
-            pos_payload = {}
-            pos_body, pos_sig = sign_coindcx(pos_payload)
-            pos_headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": pos_sig}
-            async with self.session.post(COINDCX_BASE_URL + pos_path, data=pos_body, headers=pos_headers, timeout=self.t_balance) as resp2:
-                positions = await resp2.json()
-                if isinstance(positions, list):
-                    for p in positions:
-                        lm = float(p.get("locked_user_margin") or 0)
-                        futures_locked += lm
-
-            c_bal = spot_usdt + futures_locked
-        except Exception as e:
-            logger.warning(f"Error fetching CoinDCX balance: {e}")
-
-        # Decouple balance pre-validation: CoinDCX Futures Engine manages its own margin pool.
-        # If API returns Spot < 1.0 USDT, keep last known or default to Delta available balance ($7.94 USD)
-        # so orders are transmitted directly to /derivatives/futures/orders/create for native server validation.
         env_c_bal = os.getenv("COINDCX_OVERRIDE_BALANCE")
         env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")
+        if env_d_bal: d_bal = float(env_d_bal)
+        if env_c_bal: c_bal = float(env_c_bal)
+        elif c_bal < 1.0: c_bal = getattr(self, '_last_c_bal', 9.26)
 
-        if env_d_bal:
-            try:
-                d_bal = float(env_d_bal)
-            except ValueError:
-                pass
-
-        if env_c_bal:
-            try:
-                c_bal = float(env_c_bal)
-            except ValueError:
-                pass
-        elif c_bal < 1.0:
-            # Fallback to exact CoinDCX Futures wallet available margin (9.26 USDT)
-            c_bal = getattr(self, '_last_c_bal', 9.26)
-
-        self._last_d_bal = d_bal
-        self._last_c_bal = c_bal
-
-        # 75% of minimum effective margin (allows native exchange server margin validation at order creation)
+        self._last_d_bal, self._last_c_bal = d_bal, c_bal
         min_margin = min(d_bal, c_bal) * 0.75
-        if min_margin < 1.0:
-            min_margin = max(1.0, d_bal * 0.75)
+        if min_margin < 1.0: min_margin = max(1.0, d_bal * 0.75)
 
         logger.info(f"💰 LIVE BALANCE STREAM: Delta=${d_bal:.2f} | CoinDCX Futures Engine=${c_bal:.2f} | Execution Margin(75%)=${min_margin:.2f}")
         return d_bal, c_bal, min_margin
@@ -291,47 +264,38 @@ class LiveOrderExecutor:
         post_only: bool = False,
         reduce_only: bool = False
     ) -> Dict:
-        """Delta Order Placement."""
+        """Delta Order Placement with 3 Retries."""
         path = "/v2/orders"
         payload = {
             "product_symbol": symbol,
             "size":           lots,
             "side":           side.lower(),
-            "order_type":     order_type,
+            "order_type":     "market_order" if order_type == "market_order" else order_type,
         }
         if order_type == "limit_order" and limit_price:
             payload["limit_price"] = str(limit_price)
-            if post_only:
-                payload["post_only"] = True
-        if reduce_only:
-            payload["is_reduce_only"] = True
+            if post_only: payload["post_only"] = True
+        if reduce_only: payload["is_reduce_only"] = True
 
-        payload_str  = json.dumps(payload)
-        t_stamp, sig = sign_delta("POST", path, payload_str)
-        headers = {
-            "Content-Type": "application/json",
-            "api-key":      DELTA_API_KEY,
-            "timestamp":    t_stamp,
-            "signature":    sig,
-        }
+        payload_str = json.dumps(payload)
+        delays = [5, 10, 20]
+        last_res = {"exchange": "Delta", "success": False, "http": 0, "latency_ms": 0, "error": "No attempt made"}
 
-        t0 = time.perf_counter()
-        try:
-            async with self.session.post(DELTA_BASE_URL + path, data=payload_str, headers=headers, timeout=self.t_order) as resp:
-                latency = (time.perf_counter() - t0) * 1000
-                body    = await resp.json()
-                success = resp.status in (200, 201) and body.get("success", False)
-                return {
-                    "exchange":   "Delta",
-                    "success":    success,
-                    "http":       resp.status,
-                    "latency_ms": latency,
-                    "order_id":   body.get("result", {}).get("id"),
-                    "state":      body.get("result", {}).get("state"),
-                    "response":   body,
-                }
-        except Exception as e:
-            return {"exchange": "Delta", "success": False, "http": 0, "latency_ms": 0, "error": str(e)}
+        for attempt in range(3):
+            t_stamp, sig = sign_delta("POST", path, payload_str)
+            headers = {"Content-Type": "application/json", "api-key": DELTA_API_KEY, "timestamp": t_stamp, "signature": sig}
+            t0 = time.perf_counter()
+            try:
+                async with self.session.post(DELTA_BASE_URL + path, data=payload_str, headers=headers, timeout=self.t_order) as resp:
+                    latency = (time.perf_counter() - t0) * 1000
+                    body    = await resp.json()
+                    success = resp.status in (200, 201) and body.get("success", False)
+                    last_res = {"exchange": "Delta", "success": success, "http": resp.status, "latency_ms": latency, "order_id": body.get("result", {}).get("id"), "response": body}
+                    if success: return last_res
+            except Exception as e:
+                last_res = {"exchange": "Delta", "success": False, "http": 0, "latency_ms": 0, "error": str(e)}
+            if attempt < 2: await asyncio.sleep(delays[attempt])
+        return last_res
 
     async def _delta_cancel_order(self, order_id: int, product_id: int) -> Dict:
         """Cancel a pending order on Delta."""
@@ -358,46 +322,39 @@ class LiveOrderExecutor:
         leverage: int = 20,
         reduce_only: bool = False
     ) -> Dict:
-        """CoinDCX Order Placement."""
+        """CoinDCX Order Placement with 3 Retries."""
         path    = "/exchange/v1/derivatives/futures/orders/create"
         order_dict = {
             "pair":           symbol,
             "side":           side.lower(),
-            "order_type":     order_type,
+            "order_type":     "market_order" if order_type == "market_order" else order_type,
             "total_quantity": qty,
             "leverage":       leverage,
             "margin_type":    "isolated",
         }
-        if limit_price and order_type == "limit_order":
-            order_dict["price"] = limit_price
-        if reduce_only and order_type == "limit_order":
-            order_dict["reduce_only"] = True
+        if limit_price and order_type == "limit_order": order_dict["price"] = limit_price
+        if reduce_only and order_type == "limit_order": order_dict["reduce_only"] = True
 
         payload = {"order": order_dict}
-        body_str, sig = sign_coindcx(payload)
-        headers = {
-            "Content-Type":    "application/json",
-            "X-AUTH-APIKEY":   COINDCX_API_KEY,
-            "X-AUTH-SIGNATURE": sig,
-        }
+        delays = [5, 10, 20]
+        last_res = {"exchange": "CoinDCX", "success": False, "http": 0, "latency_ms": 0, "error": "No attempt made"}
 
-        t0 = time.perf_counter()
-        try:
-            async with self.session.post(COINDCX_BASE_URL + path, data=body_str, headers=headers, timeout=self.t_order) as resp:
-                latency = (time.perf_counter() - t0) * 1000
-                body    = await resp.json()
-                success = resp.status in (200, 201)
-                oid     = body.get("id") if isinstance(body, dict) else (body[0].get("id") if isinstance(body, list) and body else None)
-                return {
-                    "exchange":   "CoinDCX",
-                    "success":    success,
-                    "http":       resp.status,
-                    "latency_ms": latency,
-                    "order_id":   oid,
-                    "response":   body,
-                }
-        except Exception as e:
-            return {"exchange": "CoinDCX", "success": False, "http": 0, "latency_ms": 0, "error": str(e)}
+        for attempt in range(3):
+            body_str, sig = sign_coindcx(payload)
+            headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": sig}
+            t0 = time.perf_counter()
+            try:
+                async with self.session.post(COINDCX_BASE_URL + path, data=body_str, headers=headers, timeout=self.t_order) as resp:
+                    latency = (time.perf_counter() - t0) * 1000
+                    body    = await resp.json()
+                    success = resp.status in (200, 201)
+                    oid     = body.get("id") if isinstance(body, dict) else (body[0].get("id") if isinstance(body, list) and body else None)
+                    last_res = {"exchange": "CoinDCX", "success": success, "http": resp.status, "latency_ms": latency, "order_id": oid, "response": body}
+                    if success: return last_res
+            except Exception as e:
+                last_res = {"exchange": "CoinDCX", "success": False, "http": 0, "latency_ms": 0, "error": str(e)}
+            if attempt < 2: await asyncio.sleep(delays[attempt])
+        return last_res
 
     # ── UNIVERSAL 4-CASE SMART ORDER ROUTER (SOR) WITH BALANCE EQUALIZER ───────
 

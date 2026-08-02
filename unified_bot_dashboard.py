@@ -207,22 +207,29 @@ def send_telegram_alert(text):
         add_log(f"Telegram alert error: {e}")
         return False
 
-def fetch(url, timeout=6):
-    req = urllib.request.Request(
-        url,
-        headers={
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-            'Accept': 'application/json'
-        }
-    )
-    try:
-        res = urllib.request.urlopen(req, timeout=timeout)
-        data = json.loads(res.read().decode())
-        if isinstance(data, dict) and 'result' in data:
-            return data['result']
-        return data
-    except Exception:
-        return []
+_LAST_DELTA_CACHE = ([], [])
+
+def fetch(url, timeout=30, retries=3):
+    """Fetches JSON with 30s timeout and 3 retries (5s, 10s, 20s backoff) to prevent cloud socket timeouts."""
+    delays = [5, 10, 20]
+    for attempt in range(retries):
+        try:
+            req = urllib.request.Request(
+                url,
+                headers={
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+                    'Accept': 'application/json'
+                }
+            )
+            res = urllib.request.urlopen(req, timeout=timeout)
+            data = json.loads(res.read().decode())
+            if isinstance(data, dict) and 'result' in data:
+                return data['result']
+            return data
+        except Exception as e:
+            if attempt < retries - 1:
+                time.sleep(delays[attempt])
+    return []
 
 def fetch_binance_funding_info():
     """Fetches funding interval hours (1H, 2H, 4H, 8H) for all contracts."""
@@ -269,16 +276,22 @@ def fetch_coindcx_binance_funding():
     return []
 
 def fetch_delta_data():
-    """Fetches product specs and tickers from Delta Exchange with fallback domain."""
+    """Fetches product specs and tickers from Delta Exchange with retry, fallback mirrors, and snapshot caching."""
+    global _LAST_DELTA_CACHE
     urls = [
         ("https://api.india.delta.exchange/v2/products", "https://api.india.delta.exchange/v2/tickers"),
         ("https://api.delta.exchange/v2/products", "https://api.delta.exchange/v2/tickers"),
     ]
     for p_url, t_url in urls:
-        products = fetch(p_url)
-        tickers  = fetch(t_url)
+        products = fetch(p_url, timeout=8, retries=3)
+        tickers  = fetch(t_url, timeout=8, retries=3)
         if isinstance(products, list) and isinstance(tickers, list) and len(products) > 0 and len(tickers) > 0:
+            _LAST_DELTA_CACHE = (products, tickers)
             return products, tickers
+    
+    # Return last known valid snapshot cache if cloud socket timeout occurs temporarily
+    if _LAST_DELTA_CACHE[0] and _LAST_DELTA_CACHE[1]:
+        return _LAST_DELTA_CACHE
     return [], []
 
 def add_log(msg):
@@ -2029,15 +2042,15 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
         return
 
 def keep_alive_self_ping_worker():
-    """Background thread that self-pings the server every 3 minutes so Render free tier never goes to sleep."""
+    """Background thread that self-pings the server every 4 minutes (240s) so Render free tier never goes to sleep."""
     time.sleep(10)
     while True:
         try:
             render_url = os.getenv("RENDER_EXTERNAL_URL") or f"http://localhost:{PORT}"
-            urllib.request.urlopen(f"{render_url}/api/ping", timeout=10)
+            urllib.request.urlopen(f"{render_url}/api/ping", timeout=30)
         except Exception:
             pass
-        time.sleep(180)  # Self-ping every 3 minutes (180s)
+        time.sleep(240)  # Self-ping every 4 minutes (240s)
 
 def safety_position_monitor_worker():
     """

@@ -41,8 +41,10 @@ async def main():
             print(f"   Gross Spread     : {o['gross_spread_pct']:+.4f}%")
             print(f"   Net PnL (Fee-Ded): +{o['net_pnl_pct']:.4f}%")
             print(f"   Hours to Expiry  : {o['hours_to_exp']:.2f} Hours")
+        sent = engine.notify_telegram_opportunities(opps)
+        print(f"📱 Telegram Alerts Sent: {sent}")
     else:
-        print("ℹ️ No Put-Call Parity opportunities exceeding Net Fee Gate (+0.15%) found in current scan cycle.")
+        print("ℹ️ No Put-Call Parity opportunities exceeding Net Fee Gate (+0.15% / $0.20 USD per lot) found in current scan cycle.")
         print("   Scanner will continue background polling every scan loop.")
 
     print("=" * 90)

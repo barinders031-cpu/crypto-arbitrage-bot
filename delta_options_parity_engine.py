@@ -36,6 +36,7 @@ from live_order_executor import (
     LiveOrderExecutor,
     LOT_SIZES
 )
+from telegram_notifier import send_telegram_alert
 
 logging.basicConfig(level=logging.INFO, format="[%(asctime)s] %(levelname)s - %(message)s")
 logger = logging.getLogger("DeltaOptionsParityEngine")
@@ -49,6 +50,7 @@ class DeltaOptionsParityEngine:
         self.executor = live_executor
         self.session = None
         self.active_parity_positions = []
+        self.last_sent_alerts = {}
 
     async def _ensure_session(self):
         if self.session is None or self.session.closed:
@@ -220,6 +222,55 @@ class DeltaOptionsParityEngine:
 
         opportunities.sort(key=lambda x: x["net_pnl_pct"], reverse=True)
         return opportunities
+
+    def format_telegram_alert(self, opp: dict) -> str:
+        """Formats exact entry limit prices into a clean Telegram Markdown message."""
+        coin = opp["coin"]
+        arb_type = opp["type"]
+        strike = opp["strike"]
+        net_usd = opp["net_usd_per_lot"]
+        net_pct = opp["net_pnl_pct"]
+        hrs = opp["hours_to_exp"]
+        
+        if arb_type == "CONVERSION":
+            leg1 = f"1️⃣ *BUY Futures ({opp['futures_sym']})* @ Limit Price: `${opp['futures_mark']:.2f}`"
+            leg2 = f"2️⃣ *BUY Put Option ({opp['put_sym']})* @ Limit Price: `${opp['put_ask']:.4f}`"
+            leg3 = f"3️⃣ *SELL Call Option ({opp['call_sym']})* @ Limit Price: `${opp['call_bid']:.4f}`"
+        else:
+            leg1 = f"1️⃣ *SELL Futures ({opp['futures_sym']})* @ Limit Price: `${opp['futures_mark']:.2f}`"
+            leg2 = f"2️⃣ *BUY Call Option ({opp['call_sym']})* @ Limit Price: `${opp['call_ask']:.4f}`"
+            leg3 = f"3️⃣ *SELL Put Option ({opp['put_sym']})* @ Limit Price: `${opp['put_bid']:.4f}`"
+
+        msg = (
+            f"🎯 *DELTA INDIA OPTIONS PARITY ARBITRAGE ALERT* 🎯\n\n"
+            f"🪙 *Asset:* `{coin}` (Strike: ${strike:.2f})\n"
+            f"⚡ *Strategy:* `{arb_type} ARBITRAGE`\n"
+            f"💵 *Net Cash Profit:* `${net_usd:+.2f} USD` per 1 Lot ({net_pct:+.4f}% Net PnL)\n"
+            f"⏱️ *Expiry:* `{hrs:.2f} Hours` (Earliest Expiry)\n\n"
+            f"📋 *EXACT ENTRY LIMIT PRICES:*\n"
+            f"{leg1}\n"
+            f"{leg2}\n"
+            f"{leg3}\n\n"
+            f"🔥 *Action:* `{opp['action']}`"
+        )
+        return msg
+
+    def notify_telegram_opportunities(self, opportunities: list, cooldown_seconds: int = 120):
+        """Sends Telegram alerts for opportunities exceeding $0.20 USD net profit gate."""
+        now_ts = int(time.time())
+        sent_count = 0
+        for opp in opportunities:
+            if opp.get("net_usd_per_lot", 0) >= 0.20:
+                alert_key = (opp["coin"], opp["strike"], opp["type"])
+                last_time = self.last_sent_alerts.get(alert_key, 0)
+                if now_ts - last_time >= cooldown_seconds:
+                    msg = self.format_telegram_alert(opp)
+                    success = send_telegram_alert(msg)
+                    if success:
+                        self.last_sent_alerts[alert_key] = now_ts
+                        sent_count += 1
+                        logger.info(f"📱 Telegram alert sent for {opp['coin']} {opp['type']} ${opp['strike']}")
+        return sent_count
 
     async def execute_parity_trade(self, opp: dict):
         """
