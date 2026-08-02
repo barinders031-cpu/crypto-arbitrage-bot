@@ -451,6 +451,44 @@ async def cleanup_background_tasks(app):
     await engine.close_session()
 
 
+async def handle_test_xrp(request):
+    """Executes 1 Lot XRP micro-test trade on Render host and auto-closes position immediately."""
+    try:
+        add_log("🧪 [RENDER API TEST] Triggering micro-lot XRP test trade (1 XRPUSD Delta / 1.0 B-XRP_USDT CoinDCX)...")
+        if not hasattr(engine, 'executor') or engine.executor is None:
+            from live_order_executor import LiveOrderExecutor
+            engine.executor = LiveOrderExecutor()
+            await engine.executor._ensure_session()
+
+        entry_res = await engine.executor.execute_entry(
+            delta_sym="XRPUSD",
+            delta_side="buy",
+            delta_lots=1,
+            coindcx_sym="B-XRP_USDT",
+            coindcx_side="sell",
+            exact_qty=1.0,
+            leverage=20,
+            coin="XRP",
+            mark_delta=0.55,
+            mark_coindcx=0.55,
+            notional_usd=0.55,
+            gross_spread_pct=0.15
+        )
+        close_res = await engine.executor.execute_full_account_position_close(
+            trigger_reason="Test XRP micro-lot auto position close"
+        )
+        res_payload = {
+            "status": "ok",
+            "test_entry": entry_res,
+            "test_close": close_res
+        }
+        add_log(f"🧪 [RENDER API TEST COMPLETE] Result: {entry_res}")
+        return web.json_response(res_payload)
+    except Exception as _ex:
+        add_log(f"❌ Error in Render XRP test: {_ex}")
+        return web.json_response({"status": "error", "message": str(_ex)}, status=500)
+
+
 def create_app():
     app = web.Application()
     app.router.add_get("/", handle_index)
@@ -459,6 +497,10 @@ def create_app():
     app.router.add_get("/status", handle_status)
     app.router.add_get("/ping", handle_ping)
     app.router.add_get("/api/state", handle_api_state)
+    app.router.add_get("/api/test_xrp", handle_test_xrp)
+    app.router.add_post("/api/test_xrp", handle_test_xrp)
+    app.router.add_get("/test_xrp", handle_test_xrp)
+    app.router.add_post("/test_xrp", handle_test_xrp)
     app.router.add_post("/api/entry", handle_api_entry)
     app.router.add_post("/api/trade", handle_api_entry)
     app.router.add_post("/api/exit", handle_api_exit)
