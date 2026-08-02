@@ -186,8 +186,8 @@ class LiveOrderExecutor:
                     if resp.status == 200:
                         data = await resp.json()
                         for b in data.get("result", []):
-                            if b.get("asset_symbol") == "USD":
-                                fetched = float(b.get("balance") or 0)
+                            if b.get("asset_symbol") in ("USDT", "USD", "DETO", "INR"):
+                                fetched = float(b.get("available_balance") or b.get("balance") or 0)
                                 if fetched > 0:
                                     d_bal = fetched
                         break
@@ -238,7 +238,7 @@ class LiveOrderExecutor:
         min_margin = min(d_bal, c_bal) * 0.75
         if min_margin < 1.0: min_margin = max(1.0, d_bal * 0.75)
 
-        logger.info(f"💰 LIVE BALANCE STREAM: Delta=${d_bal:.2f} | CoinDCX Futures Engine=${c_bal:.2f} | Execution Margin(75%)=${min_margin:.2f}")
+        logger.info(f"[BALANCE CHECK] Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Safe Margin: ${min_margin:.2f}")
         return d_bal, c_bal, min_margin
 
 

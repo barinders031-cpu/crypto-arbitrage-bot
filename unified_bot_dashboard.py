@@ -2303,12 +2303,30 @@ def safety_position_monitor_worker():
 
         time.sleep(300)  # Audit every 5 minutes (300s)
 
+def balance_refresh_thread_worker():
+    """Background thread polling live balances on Delta & CoinDCX Futures every 10 seconds."""
+    time.sleep(5)
+    while True:
+        try:
+            if LIVE_EXECUTION and _live_executor:
+                d_bal, c_bal, min_margin = run_async(_live_executor.fetch_live_balances())
+                bot_state["delta_balance"] = d_bal
+                bot_state["coindcx_balance"] = c_bal
+                tot_bal = round(d_bal + c_bal, 2)
+                bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Total: ${tot_bal:.2f}"
+                bot_state["paper_wallet_balance"] = tot_bal
+        except Exception:
+            pass
+        time.sleep(10)
+
 def run_server():
     socketserver.TCPServer.allow_reuse_address = True
     # Start 24/7 Anti-Sleep Self-Ping Background Thread
     threading.Thread(target=keep_alive_self_ping_worker, daemon=True).start()
     # Start 5-Minute Emergency Position Safety Monitor Thread
     threading.Thread(target=safety_position_monitor_worker, daemon=True).start()
+    # Start 10-Second Live Balance Refresh Worker Thread
+    threading.Thread(target=balance_refresh_thread_worker, daemon=True).start()
     with socketserver.TCPServer(("", PORT), WebDashboardHandler) as httpd:
         print(f"[{datetime.datetime.now().strftime('%H:%M:%S')}] Multi-Engine Web Dashboard running at http://localhost:{PORT}")
         try:

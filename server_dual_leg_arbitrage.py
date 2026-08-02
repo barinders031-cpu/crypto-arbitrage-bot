@@ -436,11 +436,35 @@ async def funding_scan_worker():
         await asyncio.sleep(5)
 
 
+async def balance_refresh_worker():
+    """Background worker polling live balances on Delta & CoinDCX Futures every 10 seconds."""
+    await asyncio.sleep(5)
+    while True:
+        try:
+            if not hasattr(engine, 'executor') or engine.executor is None:
+                from live_order_executor import LiveOrderExecutor
+                engine.executor = LiveOrderExecutor()
+                await engine.executor._ensure_session()
+
+            d_bal, c_bal, min_margin = await engine.executor.fetch_live_balances()
+            bot_state["delta_balance"] = d_bal
+            bot_state["coindcx_balance"] = c_bal
+            tot_bal = round(d_bal + c_bal, 2)
+            bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Total: ${tot_bal:.2f}"
+            bot_state["paper_wallet_balance"] = tot_bal
+            logger.info(f"[BALANCE CHECK] Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Safe Margin: ${min_margin:.2f}")
+        except Exception as e:
+            logger.warning(f"⚠️ Balance refresh worker warning: {e}")
+
+        await asyncio.sleep(10)
+
+
 async def start_background_tasks(app):
     app["scheduler_task"] = asyncio.create_task(continuous_funding_scheduler())
     app["scan_task"] = asyncio.create_task(funding_scan_worker())
     app["ping_task"] = asyncio.create_task(self_ping_worker())
     app["safety_task"] = asyncio.create_task(safety_position_monitor_worker())
+    app["balance_task"] = asyncio.create_task(balance_refresh_worker())
 
 
 async def cleanup_background_tasks(app):
@@ -448,6 +472,7 @@ async def cleanup_background_tasks(app):
     app["scan_task"].cancel()
     app["ping_task"].cancel()
     app["safety_task"].cancel()
+    app["balance_task"].cancel()
     await engine.close_session()
 
 
