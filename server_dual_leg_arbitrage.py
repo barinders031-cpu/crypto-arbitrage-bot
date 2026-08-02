@@ -363,14 +363,59 @@ async def safety_position_monitor_worker():
         await asyncio.sleep(300)
 
 
+async def funding_scan_worker():
+    """Continuously scans live top funding spreads and calculates countdown every 5 seconds for Web Dashboard UI."""
+    await asyncio.sleep(3)
+    while True:
+        try:
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            if now_utc.minute >= 30:
+                next_window = (now_utc + datetime.timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+            else:
+                next_window = now_utc.replace(minute=30, second=0, microsecond=0)
+
+            diff_sec = max(0, int((next_window - now_utc).total_seconds()))
+            hours = diff_sec // 3600
+            mins = (diff_sec % 3600) // 60
+            secs = diff_sec % 60
+            countdown_str = f"{hours:02d}h {mins:02d}m {secs:02d}s"
+
+            bot_state["next_funding_countdown"] = countdown_str
+            bot_state["last_scan_time"] = datetime.datetime.now().strftime("%H:%M:%S IST")
+
+            top_opp = await engine.scan_top_opportunity()
+            if top_opp:
+                bot_state["active_top_coin"] = top_opp.get("coin", "-")
+                bot_state["top_gross_spread"] = f"{top_opp.get('gross_spread_pct', 0.0):.4f}%"
+
+                bot_state["top5_coins"] = [{
+                    "coin": top_opp.get("coin", "ETH"),
+                    "delta_sym": top_opp.get("delta_sym", "ETHUSD"),
+                    "delta_rate": f"{top_opp.get('delta_rate_pct', 0.0):+.4f}%",
+                    "binance_sym": f"{top_opp.get('coin')}USDT",
+                    "binance_rate": f"{top_opp.get('coindcx_rate_pct', 0.0):+.4f}%",
+                    "cdcx_sym": top_opp.get("coindcx_sym", "B-ETH_USDT"),
+                    "cdcx_rate": f"{top_opp.get('coindcx_rate_pct', 0.0):+.4f}%",
+                    "diff": f"{top_opp.get('gross_spread_pct', 0.0):.4f}%",
+                    "next_funding": countdown_str,
+                    "action": f"{top_opp.get('delta_side')} Delta / {top_opp.get('coindcx_side')} CoinDCX"
+                }]
+        except Exception as e:
+            logger.warning(f"⚠️ [FUNDING SCAN WORKER ERROR]: {e}")
+
+        await asyncio.sleep(5)
+
+
 async def start_background_tasks(app):
     app["scheduler_task"] = asyncio.create_task(continuous_funding_scheduler())
+    app["scan_task"] = asyncio.create_task(funding_scan_worker())
     app["ping_task"] = asyncio.create_task(self_ping_worker())
     app["safety_task"] = asyncio.create_task(safety_position_monitor_worker())
 
 
 async def cleanup_background_tasks(app):
     app["scheduler_task"].cancel()
+    app["scan_task"].cancel()
     app["ping_task"].cancel()
     app["safety_task"].cancel()
     await engine.close_session()
