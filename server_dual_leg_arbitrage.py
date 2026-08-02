@@ -364,37 +364,47 @@ async def safety_position_monitor_worker():
         await asyncio.sleep(300)
 
 
+def calculate_dynamic_funding_countdown(interval_h: float = 4.0) -> str:
+    """Calculates exact countdown matching Top-1 coin's dynamic funding interval (1h, 4h, 8h)."""
+    now_utc = datetime.datetime.now(datetime.timezone.utc)
+    interval_sec = int(interval_h * 3600)
+
+    if interval_sec <= 3600:
+        target_dt = (now_utc + datetime.timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+    elif interval_sec <= 14400:
+        funding_utc_hours = [0, 4, 8, 12, 16, 20]
+        next_h = next((h for h in funding_utc_hours if h > now_utc.hour), None)
+        if next_h is not None:
+            target_dt = now_utc.replace(hour=next_h, minute=0, second=0, microsecond=0)
+        else:
+            target_dt = (now_utc + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    else:
+        funding_utc_hours = [0, 8, 16]
+        next_h = next((h for h in funding_utc_hours if h > now_utc.hour), None)
+        if next_h is not None:
+            target_dt = now_utc.replace(hour=next_h, minute=0, second=0, microsecond=0)
+        else:
+            target_dt = (now_utc + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+    diff_sec = max(0, int((target_dt - now_utc).total_seconds()))
+    hours = diff_sec // 3600
+    mins = (diff_sec % 3600) // 60
+    secs = diff_sec % 60
+    return f"{hours:02d}h {mins:02d}m {secs:02d}s"
+
+
 async def funding_scan_worker():
-    """Continuously scans live top funding spreads and calculates countdown matching official 4h funding settlements (05:30, 09:30, 13:30, 17:30, 21:30, 01:30 IST)."""
+    """Continuously scans live top funding spreads and calculates dynamic countdown for Top-1 coin (1h, 4h, 8h)."""
     await asyncio.sleep(3)
     while True:
         try:
-            now_utc = datetime.datetime.now(datetime.timezone.utc)
-            # Official 4-hour funding UTC hours: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 (05:30, 09:30, 13:30, 17:30, 21:30, 01:30 IST)
-            funding_utc_hours = [0, 4, 8, 12, 16, 20]
-            curr_hour = now_utc.hour
-
-            next_hour = None
-            for h in funding_utc_hours:
-                if h > curr_hour:
-                    next_hour = h
-                    break
-
-            if next_hour is not None:
-                target_dt = now_utc.replace(hour=next_hour, minute=0, second=0, microsecond=0)
-            else:
-                target_dt = (now_utc + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-
-            diff_sec = max(0, int((target_dt - now_utc).total_seconds()))
-            hours = diff_sec // 3600
-            mins = (diff_sec % 3600) // 60
-            secs = diff_sec % 60
-            countdown_str = f"{hours:02d}h {mins:02d}m {secs:02d}s"
+            top_opp = await engine.scan_top_opportunity()
+            interval_h = top_opp.get("interval_h", 4.0) if top_opp else 4.0
+            countdown_str = calculate_dynamic_funding_countdown(interval_h)
 
             bot_state["next_funding_countdown"] = countdown_str
             bot_state["last_scan_time"] = datetime.datetime.now().strftime("%H:%M:%S IST")
 
-            top_opp = await engine.scan_top_opportunity()
             if top_opp:
                 bot_state["active_top_coin"] = top_opp.get("coin", "-")
                 bot_state["top_gross_spread"] = f"{top_opp.get('gross_spread_pct', 0.0):.4f}%"
