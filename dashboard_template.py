@@ -312,9 +312,28 @@ HTML_DASHBOARD = """<!DOCTYPE html>
             </div>
         </div>
 
+        <div class="grid-4" style="margin-top: 15px; margin-bottom: 20px;">
+            <div class="card" style="border: 1px solid rgba(16, 185, 129, 0.3);">
+                <div class="card-label">🛡️ Delta Neutral Hedge</div>
+                <div class="card-val text-green" style="font-size: 12px; margin-top: 4px;">ACTIVE (0.00 Delta)</div>
+            </div>
+            <div class="card" style="border: 1px solid rgba(16, 185, 129, 0.3);">
+                <div class="card-label">🛡️ Fee Guard Filter</div>
+                <div class="card-val text-green" style="font-size: 12px; margin-top: 4px;">ACTIVE (&ge; 0.25%)</div>
+            </div>
+            <div class="card" style="border: 1px solid rgba(16, 185, 129, 0.3);">
+                <div class="card-label">🛡️ Delta 0% Scalper Exit</div>
+                <div class="card-val text-green" style="font-size: 12px; margin-top: 4px;">ARMED (&lt; 10s Window)</div>
+            </div>
+            <div class="card" style="border: 1px solid rgba(16, 185, 129, 0.3);">
+                <div class="card-label">🛡️ 10% Drawdown Auto-Kill</div>
+                <div class="card-val text-green" style="font-size: 12px; margin-top: 4px;">ARMED & READY</div>
+            </div>
+        </div>
+
         <div class="section-header">
             <div class="section-title" style="font-size: 14px;">Top 5 Live Funding Rate Arbitrage Opportunities</div>
-            <span style="font-size: 11px; color: var(--text-muted);">Strict Fee Guard Gate: Spread &ge; 0.15%</span>
+            <span style="font-size: 11px; color: var(--text-muted);">Strict Fee Guard Gate: Spread &ge; 0.25%</span>
         </div>
 
         <div class="table-container">
