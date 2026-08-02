@@ -409,14 +409,19 @@ async def funding_scan_worker():
                 bot_state["active_top_coin"] = top_opp.get("coin", "-")
                 bot_state["top_gross_spread"] = f"{top_opp.get('gross_spread_pct', 0.0):.4f}%"
 
+                d_raw = top_opp.get('raw_delta_rate_pct', top_opp.get('delta_rate_pct', 0.0))
+                d_int = int(top_opp.get('delta_interval_h', 4))
+                c_raw = top_opp.get('raw_coindcx_rate_pct', top_opp.get('coindcx_rate_pct', 0.0))
+                c_int = int(top_opp.get('coindcx_interval_h', 8))
+
                 bot_state["top5_coins"] = [{
                     "coin": top_opp.get("coin", "ETH"),
                     "delta_sym": top_opp.get("delta_sym", "ETHUSD"),
-                    "delta_rate": f"{top_opp.get('delta_rate_pct', 0.0):+.4f}%",
+                    "delta_rate": f"{d_raw:+.4f}% ({d_int}h)",
                     "binance_sym": f"{top_opp.get('coin')}USDT",
-                    "binance_rate": f"{top_opp.get('coindcx_rate_pct', 0.0):+.4f}%",
+                    "binance_rate": f"{c_raw:+.4f}%",
                     "cdcx_sym": top_opp.get("coindcx_sym", "B-ETH_USDT"),
-                    "cdcx_rate": f"{top_opp.get('coindcx_rate_pct', 0.0):+.4f}%",
+                    "cdcx_rate": f"{c_raw:+.4f}% ({c_int}h)",
                     "diff": f"{top_opp.get('gross_spread_pct', 0.0):.4f}%",
                     "next_funding": countdown_str,
                     "action": f"{top_opp.get('delta_side')} Delta / {top_opp.get('coindcx_side')} CoinDCX"
