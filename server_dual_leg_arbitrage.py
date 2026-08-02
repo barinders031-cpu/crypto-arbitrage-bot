@@ -515,8 +515,10 @@ async def arbitrage_loop():
                                 bot_state["delta_balance_live"] = d_b
                                 bot_state["coindcx_futures_balance_live"] = c_b
                                 tot_b = round(d_b + c_b, 2)
-                                if bot_state.get("initial_total_balance"):
-                                    bot_state["net_pnl_usd"] = round(tot_b - bot_state["initial_total_balance"], 4)
+                                initial_b = bot_state.get("initial_total_balance") or tot_b
+                                real_pnl = round(tot_b - initial_b, 4)
+                                bot_state["net_pnl_usd"] = real_pnl
+                                logger.info(f"[REAL PNL] Net: ${real_pnl:+.4f} USD (computed from live balances).")
                         
         except Exception as e:
             logger.warning(f"⚠️ [ARBITRAGE LOOP WARNING]: {e}")
