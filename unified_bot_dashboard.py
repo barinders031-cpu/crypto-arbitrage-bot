@@ -1871,8 +1871,57 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 </html>"""
 
 class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
+    def _handle_test_xrp(self):
+        """Executes 1 Lot XRP micro-test trade on Render host and auto-closes position immediately."""
+        if _live_executor:
+            try:
+                add_log("🧪 [RENDER API TEST] Triggering micro-lot XRP test trade (1 XRPUSD Delta / 1.0 B-XRP_USDT CoinDCX)...")
+                entry_res = run_async(_live_executor.execute_entry(
+                    delta_sym="XRPUSD",
+                    delta_side="buy",
+                    delta_lots=1,
+                    coindcx_sym="B-XRP_USDT",
+                    coindcx_side="sell",
+                    exact_qty=1.0,
+                    leverage=20,
+                    coin="XRP",
+                    mark_delta=0.55,
+                    mark_coindcx=0.55,
+                    notional_usd=0.55,
+                    gross_spread_pct=0.15
+                ))
+                close_res = run_async(_live_executor.execute_full_account_position_close(
+                    trigger_reason="Test XRP micro-lot auto position close"
+                ))
+                res_payload = {
+                    "status": "ok",
+                    "test_entry": entry_res,
+                    "test_close": close_res
+                }
+                add_log(f"🧪 [RENDER API TEST COMPLETE] Result: {entry_res}")
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                self.end_headers()
+                self.wfile.write(json.dumps(res_payload, default=str).encode('utf-8'))
+            except Exception as _ex:
+                add_log(f"❌ Error in Render XRP test: {_ex}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "error", "message": str(_ex)}).encode('utf-8'))
+        else:
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "error", "message": "LiveOrderExecutor not available"}).encode('utf-8'))
+
     def do_GET(self):
-        if self.path in ['/ping', '/health', '/api/ping']:
+        clean_path = self.path.split('?')[0].rstrip('/')
+        if not clean_path:
+            clean_path = '/'
+
+        if clean_path in ('/ping', '/health', '/api/ping'):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Cache-Control', 'no-cache')
@@ -1884,15 +1933,9 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                 "server_time_ist": now_ist.strftime("%Y-%m-%d %H:%M:%S IST"),
                 "bot_status": bot_state.get("status")
             }).encode('utf-8'))
-        elif self.path.startswith('/') and not self.path.startswith('/api/'):
-            self.send_response(200)
-            self.send_header('Content-Type', 'text/html; charset=utf-8')
-            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
-            self.send_header('Pragma', 'no-cache')
-            self.send_header('Expires', '0')
-            self.end_headers()
-            self.wfile.write(HTML_DASHBOARD.encode('utf-8'))
-        elif self.path.startswith('/api/state'):
+        elif clean_path in ('/api/test_xrp', '/test_xrp'):
+            self._handle_test_xrp()
+        elif clean_path.startswith('/api/state'):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
             self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
@@ -1905,57 +1948,27 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                 "triangular_history": triangular_history
             }
             self.wfile.write(json.dumps(payload, default=str).encode('utf-8'))
-        elif self.path in ('/api/test_xrp', '/test_xrp'):
-            if _live_executor:
-                try:
-                    add_log("🧪 [RENDER API TEST] Triggering micro-lot XRP test trade (1 XRPUSD Delta / 1.0 B-XRP_USDT CoinDCX)...")
-                    entry_res = run_async(_live_executor.execute_entry(
-                        delta_sym="XRPUSD",
-                        delta_side="buy",
-                        delta_lots=1,
-                        coindcx_sym="B-XRP_USDT",
-                        coindcx_side="sell",
-                        exact_qty=1.0,
-                        leverage=20,
-                        coin="XRP",
-                        mark_delta=0.55,
-                        mark_coindcx=0.55,
-                        notional_usd=0.55,
-                        gross_spread_pct=0.15
-                    ))
-                    close_res = run_async(_live_executor.execute_full_account_position_close(
-                        trigger_reason="Test XRP micro-lot auto position close"
-                    ))
-                    res_payload = {
-                        "status": "ok",
-                        "test_entry": entry_res,
-                        "test_close": close_res
-                    }
-                    add_log(f"🧪 [RENDER API TEST COMPLETE] Result: {entry_res}")
-                    self.send_response(200)
-                    self.send_header('Content-Type', 'application/json')
-                    self.end_headers()
-                    self.wfile.write(json.dumps(res_payload, default=str).encode('utf-8'))
-                    return
-                except Exception as _ex:
-                    add_log(f"❌ Error in Render XRP test: {_ex}")
-                    self.send_response(500)
-                    self.send_header('Content-Type', 'application/json')
-                    self.end_headers()
-                    self.wfile.write(json.dumps({"status": "error", "message": str(_ex)}).encode('utf-8'))
-                    return
-            else:
-                self.send_response(500)
-                self.send_header('Content-Type', 'application/json')
-                self.end_headers()
-                self.wfile.write(json.dumps({"status": "error", "message": "LiveOrderExecutor not available"}).encode('utf-8'))
-                return
+        elif not clean_path.startswith('/api/'):
+            self.send_response(200)
+            self.send_header('Content-Type', 'text/html; charset=utf-8')
+            self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+            self.send_header('Pragma', 'no-cache')
+            self.send_header('Expires', '0')
+            self.end_headers()
+            self.wfile.write(HTML_DASHBOARD.encode('utf-8'))
         else:
             self.send_response(404)
+            self.send_header('Content-Type', 'application/json')
             self.end_headers()
+            self.wfile.write(json.dumps({"status": "error", "message": "404 Not Found"}).encode('utf-8'))
 
     def do_POST(self):
-        if self.path in ('/api/entry', '/api/trade'):
+        clean_path = self.path.split('?')[0].rstrip('/')
+        if clean_path in ('/api/test_xrp', '/test_xrp'):
+            self._handle_test_xrp()
+            return
+
+        if clean_path in ('/api/entry', '/api/trade'):
             if _live_executor:
                 try:
                     content_length = int(self.headers.get('Content-Length', 0))
