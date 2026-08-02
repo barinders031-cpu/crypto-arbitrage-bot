@@ -469,12 +469,68 @@ async def balance_refresh_worker():
         await asyncio.sleep(10)
 
 
+async def arbitrage_loop():
+    """
+    Continuous 10-Second Arbitrage Trigger Loop on Render:
+    1. Polls Delta & CoinDCX rates every 10s for the #1 top spread opportunity.
+    2. If gross spread >= 0.25% (Fee Guard Net Profit Gate) and no active position open:
+       - Triggers execute_hft_parallel_entry using live balances (75% margin allocation).
+       - Automatically schedules T+2s post-funding scalper exit.
+       - Logs JSON audit with funding rates, margin used, order IDs, latency, and Real Net PnL.
+       - Updates Web Dashboard UI state instantly!
+    """
+    await asyncio.sleep(8)
+    while True:
+        try:
+            now_utc = datetime.datetime.now(datetime.timezone.utc)
+            if not getattr(engine, 'active_positions', None):
+                opp = await engine.scan_top_opportunity()
+                if opp and opp.get('gate') == 'ACCEPT' and opp.get('gross_spread_pct', 0.0) >= 0.25:
+                    funding_window_id = f"{now_utc.strftime('%Y-%m-%d')}_{now_utc.hour}"
+                    if getattr(engine, 'last_executed_window_id', None) != funding_window_id:
+                        engine.last_executed_window_id = funding_window_id
+                        logger.info(f"⚡ [CONTINUOUS ARBITRAGE LOOP] Triggering #1 Opportunity: {opp['coin']} | Spread: {opp['gross_spread_pct']:.4f}% >= 0.25%")
+                        
+                        entry_res = await engine.execute_hft_parallel_entry(opp)
+                        logger.info(f"   [JSON AUDIT ENTRY] {entry_res}")
+                        
+                        if "SUCCESS" in entry_res.get("status", ""):
+                            # Target settlement hour + 2 seconds for Scalper 0% Fee exit
+                            if now_utc.minute >= 30:
+                                target_dt = (now_utc + datetime.timedelta(hours=1)).replace(minute=0, second=2, microsecond=0)
+                            else:
+                                target_dt = now_utc.replace(minute=30, second=2, microsecond=0)
+
+                            wait_sec = (target_dt - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
+                            if 0 < wait_sec < 300:
+                                logger.info(f"⏳ Waiting {wait_sec:.2f}s for Funding Settlement & T+2s Scalper Exit...")
+                                await asyncio.sleep(wait_sec)
+
+                            exit_res = await engine.execute_hft_parallel_exit(engine.active_positions, trigger_reason="Scalper Exit T+2s")
+                            logger.info(f"   [JSON AUDIT EXIT] {exit_res}")
+
+                            # Refresh live balance to compute Real Net PnL
+                            if hasattr(engine, 'executor') and engine.executor:
+                                d_b, c_b, m_m = await engine.executor.fetch_live_balances()
+                                bot_state["delta_balance_live"] = d_b
+                                bot_state["coindcx_futures_balance_live"] = c_b
+                                tot_b = round(d_b + c_b, 2)
+                                if bot_state.get("initial_total_balance"):
+                                    bot_state["net_pnl_usd"] = round(tot_b - bot_state["initial_total_balance"], 4)
+                        
+        except Exception as e:
+            logger.warning(f"⚠️ [ARBITRAGE LOOP WARNING]: {e}")
+
+        await asyncio.sleep(10)
+
+
 async def start_background_tasks(app):
     app["scheduler_task"] = asyncio.create_task(continuous_funding_scheduler())
     app["scan_task"] = asyncio.create_task(funding_scan_worker())
     app["ping_task"] = asyncio.create_task(self_ping_worker())
     app["safety_task"] = asyncio.create_task(safety_position_monitor_worker())
     app["balance_task"] = asyncio.create_task(balance_refresh_worker())
+    app["arbitrage_task"] = asyncio.create_task(arbitrage_loop())
 
 
 async def cleanup_background_tasks(app):
@@ -483,6 +539,7 @@ async def cleanup_background_tasks(app):
     app["ping_task"].cancel()
     app["safety_task"].cancel()
     app["balance_task"].cancel()
+    app["arbitrage_task"].cancel()
     await engine.close_session()
 
 
