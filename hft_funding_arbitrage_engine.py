@@ -307,19 +307,25 @@ class HFTFundingArbitrageEngine:
             c_data = coindcx_map[coin]
             d_raw = d_data.get('raw_rate_pct', d_data['rate_pct'])
             c_raw = c_data.get('raw_rate_pct', c_data['rate_pct'])
+            d_int = d_data.get('interval_h', 4.0)
+            c_int = c_data.get('interval_h', 8.0)
+
+            # Calculate exact single-window collectable rates for the upcoming funding settlement
+            d_win_rate = d_raw
+            c_win_rate = c_raw * (d_int / c_int)
 
             # AGENTS.md Rule 4 — Real-Time Single-Window Spread Arithmetic
-            if (d_raw >= 0 and c_raw >= 0) or (d_raw <= 0 and c_raw <= 0):
+            if (d_win_rate >= 0 and c_win_rate >= 0) or (d_win_rate <= 0 and c_win_rate <= 0):
                 # Same sign: subtract (smaller from larger)
-                gross_spread = abs(d_raw - c_raw)
+                gross_spread = abs(d_win_rate - c_win_rate)
             else:
                 # Opposite sign: add both magnitudes (Double Yield Harvest)
-                gross_spread = abs(d_raw) + abs(c_raw)
+                gross_spread = abs(d_win_rate) + abs(c_win_rate)
 
             net_profit = gross_spread - (TOTAL_ROUNDTRIP_FEE_PCT * 100.0)
 
             # AGENTS.md Rule 5 — Action Logic (Double Funding Yield Harvest)
-            if d_raw >= c_raw:
+            if d_win_rate >= c_win_rate:
                 # Delta has higher (+) or less negative rate → SHORT Delta, LONG CoinDCX
                 delta_side    = "SELL"
                 coindcx_side  = "BUY"
