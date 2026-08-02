@@ -269,7 +269,6 @@ def create_app():
     app.router.add_get("/health", handle_health)
     app.router.add_get("/status", handle_status)
     app.router.add_get("/ping", handle_ping)
-    app.router.add_get("/_diag", handle_diag)
     setup_diag(app)
 
     app.on_startup.append(start_background_tasks)
