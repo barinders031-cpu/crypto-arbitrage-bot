@@ -61,15 +61,12 @@ except Exception as _dash_import_err:
 
 
 async def handle_index(request):
-    """Serve full colourful HTML Web Dashboard for browser requests."""
-    accept = request.headers.get("Accept", "")
-    if "text/html" in accept or "application/json" not in accept or request.query.get("html") == "1":
-        return web.Response(text=HTML_DASHBOARD, content_type="text/html", headers={
-            "Cache-Control": "no-cache, no-store, must-revalidate",
-            "Pragma": "no-cache",
-            "Expires": "0"
-        })
-    return await handle_health(request)
+    """Always serve full colourful HTML Web Dashboard for browser and root requests."""
+    return web.Response(text=HTML_DASHBOARD, content_type="text/html; charset=utf-8", headers={
+        "Cache-Control": "no-cache, no-store, must-revalidate",
+        "Pragma": "no-cache",
+        "Expires": "0"
+    })
 
 
 async def handle_api_state(request):
