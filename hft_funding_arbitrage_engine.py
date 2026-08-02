@@ -372,6 +372,8 @@ class HFTFundingArbitrageEngine:
 
     async def _scan_all_opportunities(self) -> List[Dict]:
         """Internal helper to scan and build all opportunities."""
+        if self.session is None or self.session.closed:
+            await self.init_session()
         delta_map, coindcx_map = await asyncio.gather(
             self.fetch_delta_funding_data(),
             self.fetch_coindcx_funding_data()
