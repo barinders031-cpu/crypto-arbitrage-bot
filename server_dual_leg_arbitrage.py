@@ -437,7 +437,7 @@ async def funding_scan_worker():
 
 
 async def balance_refresh_worker():
-    """Background worker polling live balances on Delta & CoinDCX Futures every 10 seconds."""
+    """Background worker polling live balances on Delta & CoinDCX Futures every 10 seconds and computing Real Net PnL."""
     await asyncio.sleep(5)
     while True:
         try:
@@ -452,7 +452,13 @@ async def balance_refresh_worker():
             tot_bal = round(d_bal + c_bal, 2)
             bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Total: ${tot_bal:.2f}"
             bot_state["paper_wallet_balance"] = tot_bal
-            logger.info(f"[BALANCE CHECK] Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Safe Margin: ${min_margin:.2f}")
+
+            if bot_state.get("initial_total_balance") is None or bot_state["initial_total_balance"] <= 0:
+                bot_state["initial_total_balance"] = tot_bal
+
+            real_pnl = round(tot_bal - bot_state["initial_total_balance"], 4)
+            bot_state["net_pnl_usd"] = real_pnl
+            logger.info(f"[BALANCE CHECK] Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Safe Margin: ${min_margin:.2f} | Real Net PnL: ${real_pnl:+.4f} USD")
         except Exception as e:
             logger.warning(f"⚠️ Balance refresh worker warning: {e}")
 

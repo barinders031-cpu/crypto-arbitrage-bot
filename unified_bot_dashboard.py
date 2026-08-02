@@ -2315,6 +2315,12 @@ def balance_refresh_thread_worker():
                 tot_bal = round(d_bal + c_bal, 2)
                 bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Total: ${tot_bal:.2f}"
                 bot_state["paper_wallet_balance"] = tot_bal
+
+                if bot_state.get("initial_total_balance") is None or bot_state["initial_total_balance"] <= 0:
+                    bot_state["initial_total_balance"] = tot_bal
+
+                real_pnl = round(tot_bal - bot_state["initial_total_balance"], 4)
+                bot_state["net_pnl_usd"] = real_pnl
         except Exception:
             pass
         time.sleep(10)
