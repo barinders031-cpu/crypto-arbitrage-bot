@@ -1916,6 +1916,51 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             self.end_headers()
             self.wfile.write(json.dumps({"status": "error", "message": "LiveOrderExecutor not available"}).encode('utf-8'))
 
+    def _handle_test_coindcx(self):
+        """Executes a standalone CoinDCX Futures test market order (46 XRP = $25.30 Notional) and auto-closes immediately."""
+        if _live_executor:
+            try:
+                add_log("🧪 [RENDER API TEST] Triggering standalone CoinDCX Futures test trade (46.0 B-XRP_USDT BUY)...")
+                c_order = run_async(_live_executor._coindcx_order(
+                    symbol="B-XRP_USDT",
+                    side="buy",
+                    qty=46.0,
+                    order_type="market_order",
+                    leverage=20
+                ))
+                c_close = run_async(_live_executor._coindcx_order(
+                    symbol="B-XRP_USDT",
+                    side="sell",
+                    qty=46.0,
+                    order_type="market_order",
+                    leverage=20,
+                    reduce_only=True
+                ))
+                res_payload = {
+                    "status": "ok",
+                    "exchange": "CoinDCX Futures",
+                    "symbol": "B-XRP_USDT",
+                    "test_order": c_order,
+                    "auto_close": c_close
+                }
+                add_log(f"🧪 [COINDCX STANDALONE TEST COMPLETE] Order ID: {c_order.get('order_id')} | HTTP: {c_order.get('http')}")
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                self.end_headers()
+                self.wfile.write(json.dumps(res_payload, default=str).encode('utf-8'))
+            except Exception as _ex:
+                add_log(f"❌ Error in CoinDCX standalone test: {_ex}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "error", "message": str(_ex)}).encode('utf-8'))
+        else:
+            self.send_response(500)
+            self.send_header('Content-Type', 'application/json')
+            self.end_headers()
+            self.wfile.write(json.dumps({"status": "error", "message": "LiveOrderExecutor not available"}).encode('utf-8'))
+
     def do_GET(self):
         clean_path = self.path.split('?')[0].rstrip('/')
         if not clean_path:
@@ -1935,6 +1980,8 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             }).encode('utf-8'))
         elif clean_path in ('/api/test_xrp', '/test_xrp'):
             self._handle_test_xrp()
+        elif clean_path in ('/api/test_coindcx', '/test_coindcx'):
+            self._handle_test_coindcx()
         elif clean_path.startswith('/api/state'):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -1966,6 +2013,9 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
         clean_path = self.path.split('?')[0].rstrip('/')
         if clean_path in ('/api/test_xrp', '/test_xrp'):
             self._handle_test_xrp()
+            return
+        elif clean_path in ('/api/test_coindcx', '/test_coindcx'):
+            self._handle_test_coindcx()
             return
 
         if clean_path in ('/api/entry', '/api/trade'):

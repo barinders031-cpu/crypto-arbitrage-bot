@@ -490,6 +490,48 @@ async def handle_test_xrp(request):
         return web.json_response({"status": "error", "message": str(_ex)}, status=500)
 
 
+async def handle_test_coindcx(request):
+    """Executes a standalone CoinDCX Futures test market order (46 XRP = $25.30 Notional) and auto-closes immediately."""
+    try:
+        add_log("🧪 [RENDER API TEST] Triggering standalone CoinDCX Futures test trade (46.0 B-XRP_USDT BUY)...")
+        if not hasattr(engine, 'executor') or engine.executor is None:
+            from live_order_executor import LiveOrderExecutor
+            engine.executor = LiveOrderExecutor()
+            await engine.executor._ensure_session()
+
+        # Step 1: Standalone CoinDCX Buy Order (46.0 XRP = $25.30 Notional > 24 USDT min)
+        c_order = await engine.executor._coindcx_order(
+            symbol="B-XRP_USDT",
+            side="buy",
+            qty=46.0,
+            order_type="market_order",
+            leverage=20
+        )
+        
+        # Step 2: Instant Reverse Sell Order to maintain 0 exposure
+        c_close = await engine.executor._coindcx_order(
+            symbol="B-XRP_USDT",
+            side="sell",
+            qty=46.0,
+            order_type="market_order",
+            leverage=20,
+            reduce_only=True
+        )
+
+        res_payload = {
+            "status": "ok",
+            "exchange": "CoinDCX Futures",
+            "symbol": "B-XRP_USDT",
+            "test_order": c_order,
+            "auto_close": c_close
+        }
+        add_log(f"🧪 [COINDCX STANDALONE TEST COMPLETE] Order ID: {c_order.get('order_id')} | HTTP: {c_order.get('http')}")
+        return web.json_response(res_payload)
+    except Exception as _ex:
+        add_log(f"❌ Error in CoinDCX standalone test: {_ex}")
+        return web.json_response({"status": "error", "message": str(_ex)}, status=500)
+
+
 def create_app():
     app = web.Application()
     app.router.add_get("/", handle_index)
@@ -502,6 +544,10 @@ def create_app():
     app.router.add_post("/api/test_xrp", handle_test_xrp)
     app.router.add_get("/test_xrp", handle_test_xrp)
     app.router.add_post("/test_xrp", handle_test_xrp)
+    app.router.add_get("/api/test_coindcx", handle_test_coindcx)
+    app.router.add_post("/api/test_coindcx", handle_test_coindcx)
+    app.router.add_get("/test_coindcx", handle_test_coindcx)
+    app.router.add_post("/test_coindcx", handle_test_coindcx)
     app.router.add_post("/api/entry", handle_api_entry)
     app.router.add_post("/api/trade", handle_api_entry)
     app.router.add_post("/api/exit", handle_api_exit)
