@@ -447,10 +447,14 @@ async def balance_refresh_worker():
                 await engine.executor._ensure_session()
 
             d_bal, c_bal, min_margin = await engine.executor.fetch_live_balances()
+            ts_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
             bot_state["delta_balance"] = d_bal
+            bot_state["delta_balance_live"] = d_bal
             bot_state["coindcx_balance"] = c_bal
+            bot_state["coindcx_futures_balance_live"] = c_bal
+            bot_state["last_balance_update_time"] = ts_now
             tot_bal = round(d_bal + c_bal, 2)
-            bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Total: ${tot_bal:.2f}"
+            bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Total: ${tot_bal:.2f} (Updated {ts_now})"
             bot_state["paper_wallet_balance"] = tot_bal
 
             if bot_state.get("initial_total_balance") is None or bot_state["initial_total_balance"] <= 0:
@@ -460,7 +464,7 @@ async def balance_refresh_worker():
             bot_state["net_pnl_usd"] = real_pnl
             logger.info(f"[BALANCE CHECK] Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Safe Margin: ${min_margin:.2f} | Real Net PnL: ${real_pnl:+.4f} USD")
         except Exception as e:
-            logger.warning(f"⚠️ Balance refresh worker warning: {e}")
+            logger.warning(f"⚠️ Balance refresh worker error: {e}, retrying in 10s...")
 
         await asyncio.sleep(10)
 
