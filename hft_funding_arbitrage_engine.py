@@ -305,21 +305,21 @@ class HFTFundingArbitrageEngine:
                 continue
 
             c_data = coindcx_map[coin]
-            d_rate = d_data['rate_pct']   # Already normalised per-8H %
-            c_rate = c_data['rate_pct']   # Already normalised per-8H %
+            d_raw = d_data.get('raw_rate_pct', d_data['rate_pct'])
+            c_raw = c_data.get('raw_rate_pct', c_data['rate_pct'])
 
-            # AGENTS.md Rule 4 — Spread Arithmetic Formula
-            if (d_rate >= 0 and c_rate >= 0) or (d_rate <= 0 and c_rate <= 0):
+            # AGENTS.md Rule 4 — Real-Time Single-Window Spread Arithmetic
+            if (d_raw >= 0 and c_raw >= 0) or (d_raw <= 0 and c_raw <= 0):
                 # Same sign: subtract (smaller from larger)
-                gross_spread = abs(d_rate - c_rate)
+                gross_spread = abs(d_raw - c_raw)
             else:
                 # Opposite sign: add both magnitudes (Double Yield Harvest)
-                gross_spread = abs(d_rate) + abs(c_rate)
+                gross_spread = abs(d_raw) + abs(c_raw)
 
             net_profit = gross_spread - (TOTAL_ROUNDTRIP_FEE_PCT * 100.0)
 
             # AGENTS.md Rule 5 — Action Logic (Double Funding Yield Harvest)
-            if d_rate >= c_rate:
+            if d_raw >= c_raw:
                 # Delta has higher (+) or less negative rate → SHORT Delta, LONG CoinDCX
                 delta_side    = "SELL"
                 coindcx_side  = "BUY"
@@ -331,13 +331,13 @@ class HFTFundingArbitrageEngine:
             opportunities.append({
                 'coin':              coin,
                 'delta_sym':         d_data['symbol'],
-                'delta_rate_pct':    d_rate,
-                'raw_delta_rate_pct': d_data.get('raw_rate_pct', d_rate),
+                'delta_rate_pct':    d_data['rate_pct'],
+                'raw_delta_rate_pct': d_raw,
                 'delta_interval_h':  d_data['interval_h'],
                 'delta_mark':        d_data['mark'],
                 'coindcx_sym':       c_data['symbol'],
-                'coindcx_rate_pct':  c_rate,
-                'raw_coindcx_rate_pct': c_data.get('raw_rate_pct', c_rate),
+                'coindcx_rate_pct':  c_data['rate_pct'],
+                'raw_coindcx_rate_pct': c_raw,
                 'coindcx_interval_h': c_data['interval_h'],
                 'coindcx_mark':      c_data['mark'],
                 'gross_spread_pct':  gross_spread,
