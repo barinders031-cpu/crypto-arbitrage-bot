@@ -2046,15 +2046,33 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
         return
 
 def keep_alive_self_ping_worker():
-    """Background thread that self-pings the server every 4 minutes (240s) so Render free tier never goes to sleep."""
+    """Background thread that self-pings the server every 4 minutes (240s) with 45s adaptive timeout and 2 retries (30s apart)."""
     time.sleep(10)
     while True:
-        try:
-            render_url = os.getenv("RENDER_EXTERNAL_URL") or f"http://localhost:{PORT}"
-            urllib.request.urlopen(f"{render_url}/api/ping", timeout=30)
-        except Exception:
-            pass
-        time.sleep(240)  # Self-ping every 4 minutes (240s)
+        ping_success = False
+        render_url = os.getenv("RENDER_EXTERNAL_URL") or f"http://localhost:{PORT}"
+        ping_endpoint = f"{render_url}/api/ping"
+
+        for attempt in range(2):
+            try:
+                res = urllib.request.urlopen(ping_endpoint, timeout=45)
+                if res.status in (200, 204):
+                    ping_success = True
+                    add_log(f"🟢 [KEEP-ALIVE] Self-ping success (HTTP {res.status})")
+                    break
+                else:
+                    add_log(f"⚠️ [KEEP-ALIVE] Self-ping attempt {attempt+1} returned HTTP {res.status}")
+            except Exception as e:
+                add_log(f"⚠️ [KEEP-ALIVE] Self-ping attempt {attempt+1} failed: {e}, retrying in 30s...")
+                if attempt < 1:
+                    time.sleep(30)
+
+        if not ping_success:
+            add_log("⚠️ [KEEP-ALIVE] Self-ping attempt failed, retrying in 60s...")
+            time.sleep(60)
+            continue
+
+        time.sleep(240)  # Next self-ping cycle in 4 minutes (240s)
 
 def safety_position_monitor_worker():
     """
