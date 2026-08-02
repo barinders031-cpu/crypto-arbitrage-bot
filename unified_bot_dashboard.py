@@ -1872,22 +1872,22 @@ HTML_DASHBOARD = """<!DOCTYPE html>
 
 class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
     def _handle_test_xrp(self):
-        """Executes 1 Lot XRP micro-test trade on Render host and auto-closes position immediately."""
+        """Executes XRP micro-test trade on Render host with >=24 USDT notional compliance for CoinDCX and auto-closes position immediately."""
         if _live_executor:
             try:
-                add_log("🧪 [RENDER API TEST] Triggering micro-lot XRP test trade (1 XRPUSD Delta / 1.0 B-XRP_USDT CoinDCX)...")
+                add_log("🧪 [RENDER API TEST] Triggering XRP test trade (46 XRPUSD Delta / 46.0 B-XRP_USDT CoinDCX for >24 USDT min notional compliance)...")
                 entry_res = run_async(_live_executor.execute_entry(
                     delta_sym="XRPUSD",
                     delta_side="buy",
-                    delta_lots=1,
+                    delta_lots=46,
                     coindcx_sym="B-XRP_USDT",
                     coindcx_side="sell",
-                    exact_qty=1.0,
+                    exact_qty=46.0,
                     leverage=20,
                     coin="XRP",
                     mark_delta=0.55,
                     mark_coindcx=0.55,
-                    notional_usd=0.55,
+                    notional_usd=25.3,
                     gross_spread_pct=0.15
                 ))
                 close_res = run_async(_live_executor.execute_full_account_position_close(
