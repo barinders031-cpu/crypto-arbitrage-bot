@@ -62,11 +62,16 @@ except Exception as _dash_import_err:
 
 async def handle_index(request):
     """Always serve full colourful HTML Web Dashboard for browser and root requests."""
-    return web.Response(text=HTML_DASHBOARD, content_type="text/html; charset=utf-8", headers={
-        "Cache-Control": "no-cache, no-store, must-revalidate",
-        "Pragma": "no-cache",
-        "Expires": "0"
-    })
+    return web.Response(
+        text=HTML_DASHBOARD,
+        content_type="text/html",
+        charset="utf-8",
+        headers={
+            "Cache-Control": "no-cache, no-store, must-revalidate",
+            "Pragma": "no-cache",
+            "Expires": "0"
+        }
+    )
 
 
 async def handle_api_state(request):
