@@ -25,10 +25,10 @@ except Exception:
 DELTA_BASE_URL   = os.getenv("DELTA_BASE_URL",   "https://api.india.delta.exchange")
 COINDCX_BASE_URL = os.getenv("COINDCX_BASE_URL", "https://api.coindcx.com")
 
-DELTA_API_KEY      = os.getenv("DELTA_API_KEY",      "yCqLDRMdsn4Qj6360pWRaCm4xczCSO")
-DELTA_API_SECRET   = os.getenv("DELTA_API_SECRET",   "kBBM2bfGMjiUj1LWXQVnD6vo0aM0L9sj6CD0VtSbNoG7pnC8dXI3Lft7VXaA")
-COINDCX_API_KEY    = os.getenv("COINDCX_API_KEY",    "2b28b8cad04d91128eb92048acaf2041b1249bdb13f270fe")
-COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "2fc83416123aec1d0f60fb66e5f52207cfbfee03f3a11ebc5fab4821486e036a")
+DELTA_API_KEY      = os.getenv("DELTA_API_KEY",      "4um8VJANfCCLEjyFnVelVtGVdWvEuK")
+DELTA_API_SECRET   = os.getenv("DELTA_API_SECRET",   "v2MbvEtYeCCXR04YjZg9pZonEFIKh3p0SmUPXRTNxc99VSwZRblDLVXKbUMr")
+COINDCX_API_KEY    = os.getenv("COINDCX_API_KEY",    "19dc5aee6cf601709d7928ff92bbc69f694bdddb1b5f1b31")
+COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "0438b91768ef330f9afd50d488ba2549e1e0271ee3a470e455d624f0bc96385a")
 
 # Master live/paper toggle — default TRUE for real money execution
 LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "true").strip().lower() in ("true", "1", "yes")
