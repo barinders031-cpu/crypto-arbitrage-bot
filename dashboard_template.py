@@ -324,8 +324,7 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                         <th>#</th>
                         <th>Coin</th>
                         <th>Delta Exchange Rate</th>
-                        <th>Binance Rate</th>
-                        <th>CoinDCX Rate</th>
+                        <th>CoinDCX Futures Rate</th>
                         <th>Spread (%)</th>
                         <th>Funding Countdown</th>
                         <th>Hedging Action</th>
@@ -592,7 +591,6 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                             <td><strong>${idx + 1}</strong></td>
                             <td><strong class="text-cyan">${item.coin}</strong></td>
                             <td>${item.delta_sym} (<span class="text-green">${item.delta_rate}</span>)</td>
-                            <td>${item.binance_sym} (<span class="text-cyan">${item.binance_rate}</span>)</td>
                             <td>${item.cdcx_sym} (<span class="text-yellow">${item.cdcx_rate}</span>)</td>
                             <td><strong class="text-green">${item.diff}</strong></td>
                             <td style="font-family:'JetBrains Mono',monospace;font-size:12px;">${item.next_funding || '-'}</td>

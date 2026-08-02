@@ -73,7 +73,7 @@ FEE_SCALPER_DELTA_EXIT  = 0.00000    # 0.000% Delta Scalper Exit (FREE, <10s tra
 FEE_TAKER_COINDCX_ENTRY = 0.00059    # 0.059% CoinDCX Taker Entry
 FEE_MAKER_COINDCX_EXIT  = 0.000236   # 0.0236% CoinDCX Maker Exit
 TOTAL_ROUNDTRIP_FEE_PCT = 0.001416   # 0.1416% Total — already the FULL dual-leg roundtrip
-MIN_GROSS_SPREAD_PCT    = 0.15       # Minimum Gross Spread Gate (0.15%) — AGENTS.md Rule 4
+MIN_GROSS_SPREAD_PCT    = float(os.getenv("ENTRY_SPREAD_PCT", "0.25"))   # Minimum Gross Spread Gate (0.25%) — AGENTS.md Rule 4
 
 # Sizing Lot Value Definitions — AGENTS.md Rule 2
 LOT_SIZES = {
