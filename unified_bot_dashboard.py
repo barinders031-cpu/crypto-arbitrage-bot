@@ -1905,6 +1905,51 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                 "triangular_history": triangular_history
             }
             self.wfile.write(json.dumps(payload, default=str).encode('utf-8'))
+        elif self.path in ('/api/test_xrp', '/test_xrp'):
+            if _live_executor:
+                try:
+                    add_log("🧪 [RENDER API TEST] Triggering micro-lot XRP test trade (1 XRPUSD Delta / 1.0 B-XRP_USDT CoinDCX)...")
+                    entry_res = run_async(_live_executor.execute_entry(
+                        delta_sym="XRPUSD",
+                        delta_side="buy",
+                        delta_lots=1,
+                        coindcx_sym="B-XRP_USDT",
+                        coindcx_side="sell",
+                        exact_qty=1.0,
+                        leverage=20,
+                        coin="XRP",
+                        mark_delta=0.55,
+                        mark_coindcx=0.55,
+                        notional_usd=0.55,
+                        gross_spread_pct=0.15
+                    ))
+                    close_res = run_async(_live_executor.execute_full_account_position_close(
+                        trigger_reason="Test XRP micro-lot auto position close"
+                    ))
+                    res_payload = {
+                        "status": "ok",
+                        "test_entry": entry_res,
+                        "test_close": close_res
+                    }
+                    add_log(f"🧪 [RENDER API TEST COMPLETE] Result: {entry_res}")
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps(res_payload, default=str).encode('utf-8'))
+                    return
+                except Exception as _ex:
+                    add_log(f"❌ Error in Render XRP test: {_ex}")
+                    self.send_response(500)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({"status": "error", "message": str(_ex)}).encode('utf-8'))
+                    return
+            else:
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "error", "message": "LiveOrderExecutor not available"}).encode('utf-8'))
+                return
         else:
             self.send_response(404)
             self.end_headers()
