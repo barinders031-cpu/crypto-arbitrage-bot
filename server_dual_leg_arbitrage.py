@@ -547,7 +547,7 @@ async def handle_funding_arbitrage(request):
         if not top_opp or top_opp.get('gate') != 'ACCEPT':
             return web.json_response({
                 "status": "rejected",
-                "message": "No opportunity passed Fee-Adjusted Net Profit Gate (Spread < 0.15%)",
+                "message": "No opportunity passed Fee-Adjusted Net Profit Gate (Spread < 0.25%)",
                 "scanned_opportunity": top_opp
             })
 

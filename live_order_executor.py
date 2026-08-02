@@ -44,7 +44,7 @@ TOTAL_ROUNDTRIP_FEE_PCT = 0.001416  # 0.1416% total dual-leg roundtrip
 TAKER_MAX_SPREAD_THRES   = 0.35    # Max spread threshold (0.35%)
 MAKER_MAX_SPREAD_THRES   = 0.75    # Max spread allowed for Maker Limit Orders
 DRAWDOWN_OVERRIDE_PCT    = 10.0    # Emergency Exit if loss >= 10% of margin
-MIN_GROSS_SPREAD_PCT     = 0.15    # Minimum Gross Spread required to trade
+MIN_GROSS_SPREAD_PCT     = 0.25    # Minimum Gross Spread required to trade (0.25%)
 
 # Lot sizes — AGENTS.md Rule 2
 LOT_SIZES = {

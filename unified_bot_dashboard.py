@@ -1984,7 +1984,7 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                     self.end_headers()
                     self.wfile.write(json.dumps({
                         "status": "rejected",
-                        "message": "No opportunity passed Fee-Adjusted Net Profit Gate (Spread < 0.15%)",
+                        "message": "No opportunity passed Fee-Adjusted Net Profit Gate (Spread < 0.25%)",
                         "scanned_opportunity": top_opp
                     }).encode('utf-8'))
                     return

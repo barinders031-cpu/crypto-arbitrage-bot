@@ -40,7 +40,7 @@ DELTA_API_SECRET = os.getenv("DELTA_API_SECRET", "kBBM2bfGMjiUj1LWXQVnD6vo0aM0L9
 LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "true").strip().lower() in ("true", "1", "yes")
 
 # Rules & Parameters
-MIN_GROSS_SPREAD_PCT = 0.15     # 0.15% Fee-Adjusted Net Gate (AGENTS.md Rule 4)
+MIN_GROSS_SPREAD_PCT = 0.25     # 0.25% Fee-Adjusted Net Gate (AGENTS.md Rule 4)
 DRAWDOWN_OVERRIDE_PCT = 10.0    # 10% Balance Drawdown Safety Override (AGENTS.md Rule 7)
 
 LOT_SIZES = {
