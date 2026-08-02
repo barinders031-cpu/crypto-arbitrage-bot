@@ -22,6 +22,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 from hft_funding_arbitrage_engine import HFTFundingArbitrageEngine, MIN_GROSS_SPREAD_PCT
 from live_order_executor import LIVE_EXECUTION
+from diagnostics import setup_diag
 
 logging.basicConfig(
     level=logging.INFO,
@@ -269,6 +270,7 @@ def create_app():
     app.router.add_get("/status", handle_status)
     app.router.add_get("/ping", handle_ping)
     app.router.add_get("/_diag", handle_diag)
+    setup_diag(app)
 
     app.on_startup.append(start_background_tasks)
     app.on_cleanup.append(cleanup_background_tasks)
