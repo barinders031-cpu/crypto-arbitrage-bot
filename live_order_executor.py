@@ -25,8 +25,8 @@ except Exception:
 DELTA_BASE_URL   = os.getenv("DELTA_BASE_URL",   "https://api.india.delta.exchange")
 COINDCX_BASE_URL = os.getenv("COINDCX_BASE_URL", "https://api.coindcx.com")
 
-DELTA_API_KEY      = os.getenv("DELTA_API_KEY",      "4um8VJANfCCLEjyFnVelVtGVdWvEuK")
-DELTA_API_SECRET   = os.getenv("DELTA_API_SECRET",   "v2MbvEtYeCCXR04YjZg9pZonEFIKh3p0SmUPXRTNxc99VSwZRblDLVXKbUMr")
+DELTA_API_KEY      = os.getenv("DELTA_API_KEY",      "yCqLDRMdsn4Qj6360pWRaCm4xczCSO")
+DELTA_API_SECRET   = os.getenv("DELTA_API_SECRET",   "kBBM2bfGMjiUj1LWXQVnD6vo0aM0L9sj6CD0VtSbNoG7pnC8dXI3Lft7VXaA")
 COINDCX_API_KEY    = os.getenv("COINDCX_API_KEY",    "2b28b8cad04d91128eb92048acaf2041b1249bdb13f270fe")
 COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "2fc83416123aec1d0f60fb66e5f52207cfbfee03f3a11ebc5fab4821486e036a")
 
@@ -79,9 +79,29 @@ def get_symmetric_leverage(coin: str) -> int:
     return int(min(d_lev, c_lev))
 
 
+DELTA_TIME_OFFSET = 0.0
+
+def update_delta_time_offset():
+    """Fetch Delta server time and compute clock drift offset."""
+    global DELTA_TIME_OFFSET
+    try:
+        import requests
+        res = requests.get("https://api.india.delta.exchange/v2/tickers/BTCUSD", timeout=5).json()
+        ts_micro = int(res.get("result", {}).get("timestamp", 0))
+        if ts_micro > 0:
+            server_epoch = ts_micro / 1_000_000.0
+            DELTA_TIME_OFFSET = server_epoch - time.time()
+            logger.info(f"⏱️ Delta Server Time Offset Calibrated: {DELTA_TIME_OFFSET:+.3f}s")
+    except Exception as e:
+        logger.warning(f"⚠️ Failed to calibrate Delta time offset: {e}")
+
+# Initial calibration
+update_delta_time_offset()
+
+
 def sign_delta(method: str, path: str, payload_str: str) -> Tuple[str, str]:
-    """Delta Exchange HMAC-SHA256 Signer."""
-    timestamp = str(int(time.time()))
+    """Delta Exchange HMAC-SHA256 Signer with Server Clock Drift Protection."""
+    timestamp = str(int(time.time() + DELTA_TIME_OFFSET))
     message   = method + timestamp + path + payload_str
     sig = hmac.new(DELTA_API_SECRET.encode("utf-8"), message.encode("utf-8"), hashlib.sha256).hexdigest()
     return timestamp, sig
