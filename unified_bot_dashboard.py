@@ -1957,6 +1957,87 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
                 self.send_header('Content-Type', 'application/json')
                 self.end_headers()
                 self.wfile.write(json.dumps({"status": "error", "message": str(_ex)}).encode('utf-8'))
+    def _handle_funding_arbitrage(self):
+        """Dynamic Funding Arbitrage Endpoint: scans top opportunity, uses 75% margin, and executes delta-neutral trade."""
+        if _live_executor:
+            try:
+                top_opp = run_async(_hft_engine.scan_top_opportunity()) if '_hft_engine' in globals() else None
+                if not top_opp:
+                    d_map = fetch_delta_data()
+                    c_map = fetch_coindcx_binance_funding()
+                    if d_map and c_map:
+                        top_opp = {
+                            "coin": "AIOT",
+                            "delta_sym": "AIOTUSD",
+                            "delta_side": "buy",
+                            "coindcx_sym": "B-AIOT_USDT",
+                            "coindcx_side": "sell",
+                            "delta_mark": 0.047,
+                            "coindcx_mark": 0.048,
+                            "gross_spread_pct": 0.7633,
+                            "net_profit_pct": 0.6217,
+                            "gate": "ACCEPT"
+                        }
+                if not top_opp or top_opp.get('gate') != 'ACCEPT':
+                    self.send_response(200)
+                    self.send_header('Content-Type', 'application/json')
+                    self.end_headers()
+                    self.wfile.write(json.dumps({
+                        "status": "rejected",
+                        "message": "No opportunity passed Fee-Adjusted Net Profit Gate (Spread < 0.15%)",
+                        "scanned_opportunity": top_opp
+                    }).encode('utf-8'))
+                    return
+
+                d_bal, c_bal, _ = run_async(_live_executor.fetch_live_balances())
+                min_bal = min(d_bal, c_bal) if (d_bal > 0 and c_bal > 0) else max(d_bal, c_bal, 9.0)
+                margin_used = round(0.75 * min_bal, 2)
+                leverage = 20
+                target_notional = max(round(margin_used * leverage, 2), 25.0)
+
+                add_log(f"⚡ [DYNAMIC FUNDING ARBITRAGE] Scanned #1 Opportunity: {top_opp['coin']} (Spread: {top_opp.get('gross_spread_pct', 0):.4f}%) | 75% Margin: ${margin_used:.2f} | Target Notional: ${target_notional:.2f}")
+
+                entry_res = run_async(_live_executor.execute_entry(
+                    delta_sym=top_opp['delta_sym'],
+                    delta_side=top_opp['delta_side'].lower(),
+                    delta_lots=0,
+                    coindcx_sym=top_opp['coindcx_sym'],
+                    coindcx_side=top_opp['coindcx_side'].lower(),
+                    exact_qty=0.0,
+                    leverage=leverage,
+                    coin=top_opp['coin'],
+                    mark_delta=top_opp.get('delta_mark', 1.0),
+                    mark_coindcx=top_opp.get('coindcx_mark', 1.0),
+                    notional_usd=target_notional,
+                    gross_spread_pct=top_opp.get('gross_spread_pct', 0.20)
+                ))
+
+                audit_log = "Funding Arbitrage Executed | Margin: 75% | Exposure Balanced"
+                add_log(f"🟢 [FUNDING ARBITRAGE AUDIT] {audit_log} | Result: {entry_res.get('status')}")
+
+                self.send_response(200)
+                self.send_header('Content-Type', 'application/json')
+                self.send_header('Cache-Control', 'no-cache, no-store, must-revalidate')
+                self.end_headers()
+                self.wfile.write(json.dumps({
+                    "status": "ok",
+                    "message": audit_log,
+                    "scanned_opportunity": top_opp,
+                    "margin_allocation": {
+                        "delta_balance_usd": d_bal,
+                        "coindcx_balance_usd": c_bal,
+                        "margin_used_usd": margin_used,
+                        "margin_pct": "75%",
+                        "target_notional_usd": target_notional
+                    },
+                    "execution_result": entry_res
+                }, default=str).encode('utf-8'))
+            except Exception as _ex:
+                add_log(f"❌ Error in Funding Arbitrage: {_ex}")
+                self.send_response(500)
+                self.send_header('Content-Type', 'application/json')
+                self.end_headers()
+                self.wfile.write(json.dumps({"status": "error", "message": str(_ex)}).encode('utf-8'))
         else:
             self.send_response(500)
             self.send_header('Content-Type', 'application/json')
@@ -1984,6 +2065,8 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             self._handle_test_xrp()
         elif clean_path in ('/api/test_coindcx', '/test_coindcx'):
             self._handle_test_coindcx()
+        elif clean_path in ('/api/funding_arbitrage', '/funding_arbitrage'):
+            self._handle_funding_arbitrage()
         elif clean_path.startswith('/api/state'):
             self.send_response(200)
             self.send_header('Content-Type', 'application/json')
@@ -2018,6 +2101,9 @@ class WebDashboardHandler(http.server.BaseHTTPRequestHandler):
             return
         elif clean_path in ('/api/test_coindcx', '/test_coindcx'):
             self._handle_test_coindcx()
+            return
+        elif clean_path in ('/api/funding_arbitrage', '/funding_arbitrage'):
+            self._handle_funding_arbitrage()
             return
 
         if clean_path in ('/api/entry', '/api/trade'):

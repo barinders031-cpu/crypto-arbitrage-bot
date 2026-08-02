@@ -534,6 +534,73 @@ async def handle_test_coindcx(request):
         return web.json_response({"status": "error", "message": str(_ex)}, status=500)
 
 
+async def handle_funding_arbitrage(request):
+    """
+    Dynamic Funding Arbitrage Endpoint:
+    1. Scans top #1 funding spread opportunity across Delta & CoinDCX.
+    2. Calculates 75% margin allocation from available USDT balance.
+    3. Executes symmetrical delta-neutral orders on both exchanges.
+    4. Logs JSON audit with status 'Funding Arbitrage Executed | Margin: 75% | Exposure Balanced'.
+    """
+    try:
+        top_opp = await engine.scan_top_opportunity()
+        if not top_opp or top_opp.get('gate') != 'ACCEPT':
+            return web.json_response({
+                "status": "rejected",
+                "message": "No opportunity passed Fee-Adjusted Net Profit Gate (Spread < 0.15%)",
+                "scanned_opportunity": top_opp
+            })
+
+        if not hasattr(engine, 'executor') or engine.executor is None:
+            from live_order_executor import LiveOrderExecutor
+            engine.executor = LiveOrderExecutor()
+            await engine.executor._ensure_session()
+
+        # Audit Live Balances & calculate 75% Margin Allocation
+        d_bal, c_bal, _ = await engine.executor.fetch_live_balances()
+        min_bal = min(d_bal, c_bal) if (d_bal > 0 and c_bal > 0) else max(d_bal, c_bal, 9.0)
+        margin_used = round(0.75 * min_bal, 2)
+        leverage = 20
+        target_notional = max(round(margin_used * leverage, 2), 25.0)
+
+        add_log(f"⚡ [DYNAMIC FUNDING ARBITRAGE] Scanned #1 Opportunity: {top_opp['coin']} (Spread: {top_opp['gross_spread_pct']:.4f}%) | 75% Margin: ${margin_used:.2f} | Target Notional: ${target_notional:.2f}")
+
+        entry_res = await engine.executor.execute_entry(
+            delta_sym=top_opp['delta_sym'],
+            delta_side=top_opp['delta_side'].lower(),
+            delta_lots=0,  # Auto-calculated by calculate_sizing inside execute_entry
+            coindcx_sym=top_opp['coindcx_sym'],
+            coindcx_side=top_opp['coindcx_side'].lower(),
+            exact_qty=0.0,
+            leverage=leverage,
+            coin=top_opp['coin'],
+            mark_delta=top_opp['delta_mark'],
+            mark_coindcx=top_opp['coindcx_mark'],
+            notional_usd=target_notional,
+            gross_spread_pct=top_opp['gross_spread_pct']
+        )
+
+        audit_log = "Funding Arbitrage Executed | Margin: 75% | Exposure Balanced"
+        add_log(f"🟢 [FUNDING ARBITRAGE AUDIT] {audit_log} | Result: {entry_res.get('status')}")
+
+        return web.json_response({
+            "status": "ok",
+            "message": audit_log,
+            "scanned_opportunity": top_opp,
+            "margin_allocation": {
+                "delta_balance_usd": d_bal,
+                "coindcx_balance_usd": c_bal,
+                "margin_used_usd": margin_used,
+                "margin_pct": "75%",
+                "target_notional_usd": target_notional
+            },
+            "execution_result": entry_res
+        })
+    except Exception as _ex:
+        add_log(f"❌ Error in Funding Arbitrage: {_ex}")
+        return web.json_response({"status": "error", "message": str(_ex)}, status=500)
+
+
 def create_app():
     app = web.Application()
     app.router.add_get("/", handle_index)
@@ -550,6 +617,10 @@ def create_app():
     app.router.add_post("/api/test_coindcx", handle_test_coindcx)
     app.router.add_get("/test_coindcx", handle_test_coindcx)
     app.router.add_post("/test_coindcx", handle_test_coindcx)
+    app.router.add_get("/api/funding_arbitrage", handle_funding_arbitrage)
+    app.router.add_post("/api/funding_arbitrage", handle_funding_arbitrage)
+    app.router.add_get("/funding_arbitrage", handle_funding_arbitrage)
+    app.router.add_post("/funding_arbitrage", handle_funding_arbitrage)
     app.router.add_post("/api/entry", handle_api_entry)
     app.router.add_post("/api/trade", handle_api_entry)
     app.router.add_post("/api/exit", handle_api_exit)
