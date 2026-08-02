@@ -571,8 +571,8 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                 if (!data || !data.state) return;
 
                 // --- UPDATE ENGINE 1: FUNDING ARBITRAGE ---
-                const dBal = data.state.delta_balance || 7.94;
-                const cBal = data.state.coindcx_balance || 9.26;
+                const dBal = data.state.delta_balance_live || data.state.delta_balance || 7.94;
+                const cBal = data.state.coindcx_futures_balance_live || data.state.coindcx_balance || 9.26;
                 const mBal = data.state.active_margin_per_exchange || ('$' + (Math.min(dBal, cBal) * 0.75).toFixed(2));
                 
                 const dBalEl = document.getElementById('val-delta-bal');
@@ -599,7 +599,8 @@ HTML_DASHBOARD = """<!DOCTYPE html>
                     liveModeEl.style.color = lm.includes('LIVE') ? '#ff4d4d' : '#aaaaaa';
                 }
 
-                document.getElementById('val-scan-time').innerText = 'Last Scan: ' + (data.state.last_scan_time || 'Just Now');
+                const tsStr = data.state.last_balance_update_time ? data.state.last_balance_update_time.split(' ').pop() : new Date().toLocaleTimeString();
+                document.getElementById('val-scan-time').innerText = 'Last updated: ' + tsStr + ' | Last Scan: ' + (data.state.last_scan_time || 'Just Now');
                 document.getElementById('val-countdown').innerText = data.state.next_funding_countdown || 'Calculating...';
                 document.getElementById('val-tg-status').innerText = data.state.telegram_status || 'Not Configured';
 
