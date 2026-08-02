@@ -394,38 +394,42 @@ def calculate_dynamic_funding_countdown(interval_h: float = 4.0) -> str:
 
 
 async def funding_scan_worker():
-    """Continuously scans live top funding spreads and calculates dynamic countdown for Top-1 coin (1h, 4h, 8h)."""
+    """Continuously scans live top 5 funding spreads and calculates dynamic countdown for Top-1 coin."""
     await asyncio.sleep(3)
     while True:
         try:
-            top_opp = await engine.scan_top_opportunity()
-            interval_h = top_opp.get("interval_h", 4.0) if top_opp else 4.0
-            countdown_str = calculate_dynamic_funding_countdown(interval_h)
+            top_opps = await engine.scan_top_opportunities(limit=5)
+            if top_opps:
+                top_opp = top_opps[0]
+                interval_h = top_opp.get("interval_h", 4.0)
+                countdown_str = calculate_dynamic_funding_countdown(interval_h)
 
-            bot_state["next_funding_countdown"] = countdown_str
-            bot_state["last_scan_time"] = datetime.datetime.now().strftime("%H:%M:%S IST")
-
-            if top_opp:
+                bot_state["next_funding_countdown"] = countdown_str
+                bot_state["last_scan_time"] = datetime.datetime.now().strftime("%H:%M:%S IST")
                 bot_state["active_top_coin"] = top_opp.get("coin", "-")
                 bot_state["top_gross_spread"] = f"{top_opp.get('gross_spread_pct', 0.0):.4f}%"
 
-                d_raw = top_opp.get('raw_delta_rate_pct', top_opp.get('delta_rate_pct', 0.0))
-                d_int = int(top_opp.get('delta_interval_h', 4))
-                c_raw = top_opp.get('raw_coindcx_rate_pct', top_opp.get('coindcx_rate_pct', 0.0))
-                c_int = int(top_opp.get('coindcx_interval_h', 8))
+                top5_list = []
+                for opp in top_opps:
+                    d_raw = opp.get('raw_delta_rate_pct', opp.get('delta_rate_pct', 0.0))
+                    d_int = int(opp.get('delta_interval_h', 4))
+                    c_raw = opp.get('raw_coindcx_rate_pct', opp.get('coindcx_rate_pct', 0.0))
+                    c_int = int(opp.get('coindcx_interval_h', 8))
+                    opp_countdown = calculate_dynamic_funding_countdown(opp.get('delta_interval_h', 4.0))
 
-                bot_state["top5_coins"] = [{
-                    "coin": top_opp.get("coin", "ETH"),
-                    "delta_sym": top_opp.get("delta_sym", "ETHUSD"),
-                    "delta_rate": f"{d_raw:+.4f}% ({d_int}h)",
-                    "binance_sym": f"{top_opp.get('coin')}USDT",
-                    "binance_rate": f"{c_raw:+.4f}%",
-                    "cdcx_sym": top_opp.get("coindcx_sym", "B-ETH_USDT"),
-                    "cdcx_rate": f"{c_raw:+.4f}% ({c_int}h)",
-                    "diff": f"{top_opp.get('gross_spread_pct', 0.0):.4f}%",
-                    "next_funding": countdown_str,
-                    "action": f"{top_opp.get('delta_side')} Delta / {top_opp.get('coindcx_side')} CoinDCX"
-                }]
+                    top5_list.append({
+                        "coin": opp.get("coin", "ETH"),
+                        "delta_sym": opp.get("delta_sym", "ETHUSD"),
+                        "delta_rate": f"{d_raw:+.4f}% ({d_int}h)",
+                        "binance_sym": f"{opp.get('coin')}USDT",
+                        "binance_rate": f"{c_raw:+.4f}%",
+                        "cdcx_sym": opp.get("coindcx_sym", "B-ETH_USDT"),
+                        "cdcx_rate": f"{c_raw:+.4f}% ({c_int}h)",
+                        "diff": f"{opp.get('gross_spread_pct', 0.0):.4f}%",
+                        "next_funding": opp_countdown,
+                        "action": f"{opp.get('delta_side')} Delta / {opp.get('coindcx_side')} CoinDCX"
+                    })
+                bot_state["top5_coins"] = top5_list
         except Exception as e:
             logger.warning(f"⚠️ [FUNDING SCAN WORKER ERROR]: {e}")
 

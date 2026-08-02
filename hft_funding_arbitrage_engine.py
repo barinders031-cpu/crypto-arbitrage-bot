@@ -334,7 +334,7 @@ class HFTFundingArbitrageEngine:
                 delta_side    = "BUY"
                 coindcx_side  = "SELL"
 
-            opportunities.append({
+            item = {
                 'coin':              coin,
                 'delta_sym':         d_data['symbol'],
                 'delta_rate_pct':    d_data['rate_pct'],
@@ -350,17 +350,88 @@ class HFTFundingArbitrageEngine:
                 'net_profit_pct':    net_profit,
                 'delta_side':        delta_side,
                 'coindcx_side':      coindcx_side,
-            })
+            }
+            item['gate'] = "ACCEPT" if gross_spread >= MIN_GROSS_SPREAD_PCT else "REJECT"
+            opportunities.append(item)
 
         if not opportunities:
-            return None
+            return []
 
         opportunities.sort(key=lambda x: x['gross_spread_pct'], reverse=True)
-        best = opportunities[0]
+        return opportunities
 
-        # AGENTS.md Rule 4 — Mandatory Net Profit Gate
-        best['gate'] = "ACCEPT" if best['gross_spread_pct'] >= MIN_GROSS_SPREAD_PCT else "REJECT"
-        return best
+    async def scan_top_opportunities(self, limit: int = 5) -> List[Dict]:
+        """Scans and returns top N opportunities sorted by real-time gross spread."""
+        opps = await self._scan_all_opportunities()
+        return opps[:limit]
+
+    async def scan_top_opportunity(self) -> Optional[Dict]:
+        """Scans and returns the single #1 top opportunity."""
+        opps = await self.scan_top_opportunities(limit=1)
+        return opps[0] if opps else None
+
+    async def _scan_all_opportunities(self) -> List[Dict]:
+        """Internal helper to scan and build all opportunities."""
+        delta_map, coindcx_map = await asyncio.gather(
+            self.fetch_delta_funding_data(),
+            self.fetch_coindcx_funding_data()
+        )
+        if not delta_map or not coindcx_map:
+            return []
+
+        opportunities: List[Dict] = []
+        for coin, d_data in delta_map.items():
+            if coin not in coindcx_map:
+                continue
+
+            c_data = coindcx_map[coin]
+            d_raw = d_data.get('raw_rate_pct', d_data['rate_pct'])
+            c_raw = c_data.get('raw_rate_pct', c_data['rate_pct'])
+            d_int = d_data.get('interval_h', 4.0)
+            c_int = c_data.get('interval_h', 8.0)
+
+            d_win_rate = d_raw
+            c_win_rate = c_raw * (d_int / c_int)
+
+            if (d_win_rate >= 0 and c_win_rate >= 0) or (d_win_rate <= 0 and c_win_rate <= 0):
+                gross_spread = abs(d_win_rate - c_win_rate)
+            else:
+                gross_spread = abs(d_win_rate) + abs(c_win_rate)
+
+            net_profit = gross_spread - (TOTAL_ROUNDTRIP_FEE_PCT * 100.0)
+
+            if d_win_rate >= c_win_rate:
+                delta_side    = "SELL"
+                coindcx_side  = "BUY"
+            else:
+                delta_side    = "BUY"
+                coindcx_side  = "SELL"
+
+            item = {
+                'coin':              coin,
+                'delta_sym':         d_data['symbol'],
+                'delta_rate_pct':    d_data['rate_pct'],
+                'raw_delta_rate_pct': d_raw,
+                'delta_interval_h':  d_data['interval_h'],
+                'delta_mark':        d_data['mark'],
+                'coindcx_sym':       c_data['symbol'],
+                'coindcx_rate_pct':  c_data['rate_pct'],
+                'raw_coindcx_rate_pct': c_raw,
+                'coindcx_interval_h': c_data['interval_h'],
+                'coindcx_mark':      c_data['mark'],
+                'gross_spread_pct':  gross_spread,
+                'net_profit_pct':    net_profit,
+                'delta_side':        delta_side,
+                'coindcx_side':      coindcx_side,
+            }
+            item['gate'] = "ACCEPT" if gross_spread >= MIN_GROSS_SPREAD_PCT else "REJECT"
+            opportunities.append(item)
+
+        if not opportunities:
+            return []
+
+        opportunities.sort(key=lambda x: x['gross_spread_pct'], reverse=True)
+        return opportunities
 
     # =========================================================================
     # SIZING — AGENTS.md Rule 8
