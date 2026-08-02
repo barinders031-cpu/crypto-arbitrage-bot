@@ -131,9 +131,10 @@ class HFTFundingArbitrageEngine:
         self.total_trades = 0
         self.total_pnl_usd = 0.0
 
-        # BUG #8 FIX: Define separate HFT timeouts for each operation type
-        self.timeout_scan   = aiohttp.ClientTimeout(total=5, connect=2, sock_read=4)
-        self.timeout_order  = aiohttp.ClientTimeout(total=3, connect=1, sock_read=2)
+        # Adaptive 45s scan timeout & 30s order timeout for cloud hosts
+        self.timeout_scan   = aiohttp.ClientTimeout(total=45, connect=10.0, sock_read=35.0)
+        self.timeout_order  = aiohttp.ClientTimeout(total=30, connect=10.0, sock_read=25.0)
+        self._last_delta_hft_cache: Dict[str, Dict] = {}
 
     async def init_session(self):
         """Initializes high-performance async HTTP session with connection pooling."""
@@ -153,21 +154,24 @@ class HFTFundingArbitrageEngine:
     # DATA FETCHING — FUNDING RATES
     # =========================================================================
     async def _fetch_json(self, url: str) -> Optional[Dict]:
-        """Helper: fetch JSON from URL with scan timeout. Returns None on failure."""
-        try:
-            async with self.session.get(url, timeout=self.timeout_scan) as resp:
-                if resp.status != 200:
-                    return None
-                return await resp.json()
-        except Exception as e:
-            logging.error(f"Fetch failed {url}: {e}")
-            return None
+        """Helper: fetch JSON from URL with 45s adaptive scan timeout. Returns None on failure."""
+        delays = [5, 10, 20]
+        for attempt in range(3):
+            try:
+                async with self.session.get(url, timeout=self.timeout_scan) as resp:
+                    if resp.status == 200:
+                        return await resp.json()
+            except Exception as e:
+                logging.warning(f"Delta fetch attempt {attempt+1} failed: socket timeout ({e})")
+                if attempt < 2:
+                    await asyncio.sleep(delays[attempt])
+        return None
 
     async def fetch_delta_funding_data(self) -> Dict[str, Dict]:
         """
         Fetch perpetual tickers & funding rates + funding intervals from Delta.
-        Uses asyncio.gather for true parallel fetching (~180ms vs ~690ms sequential).
-        Returns per-8H normalised rates.
+        Uses asyncio.gather for true parallel fetching.
+        Returns per-8H normalised rates with snapshot fallback.
         """
         products_url = f"{DELTA_BASE_URL}/v2/products"
         tickers_url  = f"{DELTA_BASE_URL}/v2/tickers"
@@ -178,6 +182,9 @@ class HFTFundingArbitrageEngine:
                 self._fetch_json(tickers_url)
             )
             if prod_data is None or ticker_data is None:
+                if self._last_delta_hft_cache:
+                    logging.warning("Fallback to snapshot cache triggered: Delta API timeout, using last snapshot cache")
+                    return self._last_delta_hft_cache
                 return {}
 
             # Build interval map from products
@@ -220,10 +227,14 @@ class HFTFundingArbitrageEngine:
                     'interval_h':    actual_interval_h,
                     'mark':          mark,
                 }
+            self._last_delta_hft_cache = ticker_map
             return ticker_map
 
         except Exception as e:
             logging.error(f"Error fetching Delta funding data: {e}")
+        if self._last_delta_hft_cache:
+            logging.warning("Fallback to snapshot cache triggered: Delta API timeout, using last snapshot cache")
+            return self._last_delta_hft_cache
         return {}
 
     async def fetch_coindcx_funding_data(self) -> Dict[str, Dict]:
@@ -297,6 +308,8 @@ class HFTFundingArbitrageEngine:
             self.fetch_delta_funding_data(),
             self.fetch_coindcx_funding_data()
         )
+        if delta_map and coindcx_map:
+            logging.info("Parallel fetch success: Delta+CoinDCX")
 
         opportunities: List[Dict] = []
 

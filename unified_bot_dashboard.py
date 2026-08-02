@@ -209,8 +209,8 @@ def send_telegram_alert(text):
 
 _LAST_DELTA_CACHE = ([], [])
 
-def fetch(url, timeout=30, retries=3):
-    """Fetches JSON with 30s timeout and 3 retries (5s, 10s, 20s backoff) to prevent cloud socket timeouts."""
+def fetch(url, timeout=45, retries=3):
+    """Fetches JSON with 45s adaptive timeout and 3 retries (5s, 10s, 20s backoff) to handle cloud host socket timeouts."""
     delays = [5, 10, 20]
     for attempt in range(retries):
         try:
@@ -227,13 +227,15 @@ def fetch(url, timeout=30, retries=3):
                 return data['result']
             return data
         except Exception as e:
+            if "india.delta.exchange" in url or "delta.exchange" in url:
+                print(f"[LOG] Delta fetch attempt {attempt+1} failed: socket timeout ({e})")
             if attempt < retries - 1:
                 time.sleep(delays[attempt])
     return []
 
 def fetch_binance_funding_info():
     """Fetches funding interval hours (1H, 2H, 4H, 8H) for all contracts."""
-    data = fetch("https://fapi.binance.com/fapi/v1/fundingInfo")
+    data = fetch("https://fapi.binance.com/fapi/v1/fundingInfo", timeout=45)
     if isinstance(data, list):
         return {item.get('symbol'): float(item.get('fundingIntervalHours', 8)) for item in data if isinstance(item, dict)}
     return {}
@@ -241,17 +243,17 @@ def fetch_binance_funding_info():
 def fetch_coindcx_binance_funding():
     """Fetches perpetual funding rates from Binance or global fallback exchanges (Gate.io / MEXC) when deployed on cloud hosts (e.g. Render US)."""
     # 1. Binance Direct
-    data = fetch("https://fapi.binance.com/fapi/v1/premiumIndex")
+    data = fetch("https://fapi.binance.com/fapi/v1/premiumIndex", timeout=45)
     if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and 'lastFundingRate' in data[0]:
         return data
 
     # 2. Binance via Public AllOrigins Proxy
-    data = fetch("https://api.allorigins.win/raw?url=https%3A%2F%2Ffapi.binance.com%2Ffapi%2Fv1%2FpremiumIndex")
+    data = fetch("https://api.allorigins.win/raw?url=https%3A%2F%2Ffapi.binance.com%2Ffapi%2Fv1%2FpremiumIndex", timeout=45)
     if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict) and 'lastFundingRate' in data[0]:
         return data
 
     # 3. Gate.io Futures Fallback
-    gate_data = fetch("https://api.gateio.ws/api/v4/futures/usdt/tickers")
+    gate_data = fetch("https://api.gateio.ws/api/v4/futures/usdt/tickers", timeout=45)
     if isinstance(gate_data, list) and len(gate_data) > 0:
         converted = []
         for item in gate_data:
@@ -262,7 +264,7 @@ def fetch_coindcx_binance_funding():
         return converted
 
     # 4. MEXC Futures Fallback
-    mexc_resp = fetch("https://contract.mexc.com/api/v1/contract/ticker")
+    mexc_resp = fetch("https://contract.mexc.com/api/v1/contract/ticker", timeout=45)
     items = mexc_resp.get('data', []) if isinstance(mexc_resp, dict) else []
     if isinstance(items, list) and len(items) > 0:
         converted = []
@@ -283,14 +285,16 @@ def fetch_delta_data():
         ("https://api.delta.exchange/v2/products", "https://api.delta.exchange/v2/tickers"),
     ]
     for p_url, t_url in urls:
-        products = fetch(p_url, timeout=8, retries=3)
-        tickers  = fetch(t_url, timeout=8, retries=3)
+        products = fetch(p_url, timeout=45, retries=3)
+        tickers  = fetch(t_url, timeout=45, retries=3)
         if isinstance(products, list) and isinstance(tickers, list) and len(products) > 0 and len(tickers) > 0:
             _LAST_DELTA_CACHE = (products, tickers)
             return products, tickers
     
     # Return last known valid snapshot cache if cloud socket timeout occurs temporarily
     if _LAST_DELTA_CACHE[0] and _LAST_DELTA_CACHE[1]:
+        print("[LOG] Fallback to snapshot cache triggered: Delta API timeout, using last snapshot cache")
+        add_log("⚠️ Fallback to snapshot cache triggered: Delta API timeout, using last snapshot cache")
         return _LAST_DELTA_CACHE
     return [], []
 
