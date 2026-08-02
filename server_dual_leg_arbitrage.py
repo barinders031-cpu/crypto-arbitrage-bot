@@ -270,9 +270,10 @@ async def continuous_funding_scheduler():
     while True:
         try:
             now_utc = datetime.datetime.now(datetime.timezone.utc)
-            # Pre-funding window triggers T-2 min before funding settlements (:00 or :30)
-            is_pre_funding = now_utc.minute in (28, 29, 58, 59)
-            funding_window_id = f"{now_utc.strftime('%Y-%m-%d_%H')}_{(now_utc.minute // 30)}"
+            # Official 4-hour funding settlements occur at 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC (05:30, 09:30, 13:30, 17:30, 21:30, 01:30 IST)
+            # Pre-funding window (T-2 min) triggers at minute 58-59 of UTC hours 23, 3, 7, 11, 15, 19
+            is_pre_funding = (now_utc.hour in [23, 3, 7, 11, 15, 19]) and (now_utc.minute in (58, 59))
+            funding_window_id = f"{now_utc.strftime('%Y-%m-%d')}_{now_utc.hour}"
 
             if is_pre_funding and getattr(engine, "last_executed_window_id", None) != funding_window_id:
                 logger.info(f"⚡ PRE-FUNDING WINDOW DETECTED (UTC {now_utc.strftime('%H:%M:%S')})! Scanning #1 top opportunity...")
@@ -364,17 +365,27 @@ async def safety_position_monitor_worker():
 
 
 async def funding_scan_worker():
-    """Continuously scans live top funding spreads and calculates countdown every 5 seconds for Web Dashboard UI."""
+    """Continuously scans live top funding spreads and calculates countdown matching official 4h funding settlements (05:30, 09:30, 13:30, 17:30, 21:30, 01:30 IST)."""
     await asyncio.sleep(3)
     while True:
         try:
             now_utc = datetime.datetime.now(datetime.timezone.utc)
-            if now_utc.minute >= 30:
-                next_window = (now_utc + datetime.timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
-            else:
-                next_window = now_utc.replace(minute=30, second=0, microsecond=0)
+            # Official 4-hour funding UTC hours: 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 (05:30, 09:30, 13:30, 17:30, 21:30, 01:30 IST)
+            funding_utc_hours = [0, 4, 8, 12, 16, 20]
+            curr_hour = now_utc.hour
 
-            diff_sec = max(0, int((next_window - now_utc).total_seconds()))
+            next_hour = None
+            for h in funding_utc_hours:
+                if h > curr_hour:
+                    next_hour = h
+                    break
+
+            if next_hour is not None:
+                target_dt = now_utc.replace(hour=next_hour, minute=0, second=0, microsecond=0)
+            else:
+                target_dt = (now_utc + datetime.timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+            diff_sec = max(0, int((target_dt - now_utc).total_seconds()))
             hours = diff_sec // 3600
             mins = (diff_sec % 3600) // 60
             secs = diff_sec % 60
