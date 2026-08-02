@@ -16,8 +16,8 @@ BASE_URL = os.getenv("DELTA_BASE_URL", "https://api.india.delta.exchange")
 
 class DeltaClient:
     def __init__(self, api_key=None, api_secret=None, base_url=None):
-        self.api_key = api_key or os.getenv("DELTA_API_KEY", "bZIwAB5Q1FM5nTflbg4CWNmYaDt7pI")
-        self.api_secret = api_secret or os.getenv("DELTA_API_SECRET", "v8eGb9IFsW1gR8P4TL5sMnjX7hQvOLTNxKsaUGTnzAGaGMALcwxUYu6K3im0")
+        self.api_key = api_key or os.getenv("DELTA_API_KEY", "4um8VJANfCCLEjyFnVelVtGVdWvEuK")
+        self.api_secret = api_secret or os.getenv("DELTA_API_SECRET", "v2MbvEtYeCCXR04YjZg9pZonEFIKh3p0SmUPXRTNxc99VSwZRblDLVXKbUMr")
         self.base_url = base_url or BASE_URL
         self.session = requests.Session()
     

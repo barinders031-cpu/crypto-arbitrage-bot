@@ -23,8 +23,8 @@ from datetime import datetime, timedelta, timezone
 from delta_client import DeltaClient
 
 # Environment / Default API Credentials
-API_KEY = os.getenv("DELTA_API_KEY", "bZIwAB5Q1FM5nTflbg4CWNmYaDt7pI")
-API_SECRET = os.getenv("DELTA_API_SECRET", "v8eGb9IFsW1gR8P4TL5sMnjX7hQvOLTNxKsaUGTnzAGaGMALcwxUYu6K3im0")
+API_KEY = os.getenv("DELTA_API_KEY", "4um8VJANfCCLEjyFnVelVtGVdWvEuK")
+API_SECRET = os.getenv("DELTA_API_SECRET", "v2MbvEtYeCCXR04YjZg9pZonEFIKh3p0SmUPXRTNxc99VSwZRblDLVXKbUMr")
 
 # Delta Exchange fee structure (per leg)
 TAKER_FEE_PCT = 0.0005   # 0.05% taker fee per order
