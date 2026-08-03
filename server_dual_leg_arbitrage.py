@@ -545,14 +545,15 @@ async def arbitrage_loop():
 
                         # PRINT [TRADE TRIGGERED] LOG
                         trade_triggered_msg = (
-                            f"⚡ [TRADE TRIGGERED] Asset: {coin} | "
-                            f"Gross Spread: {gross_spread:.4f}% | "
-                            f"Net Spread: {net_spread:+.4f}% >= Threshold {target_spread_threshold:.4f}% | "
-                            f"Leg 1 (Delta): {opp['delta_side']} {d_sym} | "
-                            f"Leg 2 (CoinDCX): {opp['coindcx_side']} {c_sym} | "
-                            f"Timing: {timing_str}"
+                            f"⚡ *[TRADE TRIGGERED]*\n\n"
+                            f"🪙 *Asset:* `{coin}`\n"
+                            f"📈 *Gross Spread:* `{gross_spread:.4f}%` | *Net:* `{net_spread:+.4f}%` (Threshold `{target_spread_threshold:.4f}%`)\n"
+                            f"🏛️ *Leg 1 (Delta):* `{opp['delta_side']} {d_sym}`\n"
+                            f"🏛️ *Leg 2 (CoinDCX):* `{opp['coindcx_side']} {c_sym}`\n"
+                            f"⏱️ *Timing:* {timing_str}"
                         )
                         add_log(trade_triggered_msg)
+                        send_telegram_alert(trade_triggered_msg)
 
                         # Align with T-10s settlement window if not already in it
                         if 10 < seconds_to_settlement < 300:
@@ -563,6 +564,7 @@ async def arbitrage_loop():
                         add_log(f"🚀 [T-10s ENTRY FIRING] Transmitting simultaneous market orders on Delta & CoinDCX...")
                         entry_res = await engine.execute_hft_parallel_entry(opp)
                         add_log(f"   [JSON AUDIT ENTRY] {entry_res}")
+                        send_telegram_alert(f"🚀 *[ENTRY EXECUTED]* Asset: `{coin}` | Status: `{entry_res.get('status')}`")
 
                         if "SUCCESS" in entry_res.get("status", ""):
                             # Sleep until T+2s post-funding for 0% Delta Scalper Exit
@@ -584,7 +586,9 @@ async def arbitrage_loop():
                                 initial_b = bot_state.get("initial_total_balance") or tot_b
                                 real_pnl = round(tot_b - initial_b, 4)
                                 bot_state["net_pnl_usd"] = real_pnl
-                                add_log(f"[REAL PNL] Net: ${real_pnl:+.4f} USD (computed from live balances).")
+                                pnl_msg = f"🎉 *[HARVEST COMPLETE]* Real Net PnL: `${real_pnl:+.4f} USD`"
+                                add_log(pnl_msg)
+                                send_telegram_alert(pnl_msg)
             else:
                 add_log(f"🔍 [SPREAD CHECK] No common coins found | {timing_str}")
 
