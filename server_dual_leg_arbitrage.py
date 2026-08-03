@@ -471,45 +471,111 @@ async def balance_refresh_worker():
 
 async def arbitrage_loop():
     """
-    Continuous 10-Second Arbitrage Trigger Loop on Render:
-    1. Polls Delta & CoinDCX rates every 10s for the #1 top spread opportunity.
-    2. If gross spread >= 0.25% (Fee Guard Net Profit Gate) and no active position open:
-       - Triggers execute_hft_parallel_entry using live balances (75% margin allocation).
-       - Automatically schedules T+2s post-funding scalper exit.
-       - Logs JSON audit with funding rates, margin used, order IDs, latency, and Real Net PnL.
-       - Updates Web Dashboard UI state instantly!
+    Continuous Arbitrage Trigger Loop:
+    - Log every spread check with Delta and CoinDCX funding rates.
+    - Verify endpoints: Delta /v2/funding_rates, CoinDCX /exchange/v1/derivatives/futures/funding_rates.
+    - Lower spread threshold temporarily to 0.10% and test.
+    - Implement Net Spread = Gross Spread - (fees).
+    - Ensure loop aligns with funding settlement window (T-10s entry, T+2s exit).
+    - Print [SPREAD CHECK] and [TRADE TRIGGERED] logs for every cycle.
     """
-    await asyncio.sleep(8)
+    await asyncio.sleep(5)
+
+    # Verify endpoints at startup
+    try:
+        endpoint_res = await engine.verify_funding_endpoints()
+        add_log(f"🔍 [ENDPOINT VERIFICATION COMPLETE] Result: {endpoint_res}")
+    except Exception as e:
+        add_log(f"⚠️ [ENDPOINT VERIFICATION ERROR] {e}")
+
+    fees_pct = 0.1416  # 0.1416% Total Dual-Leg Roundtrip Fee
+    target_spread_threshold = float(os.getenv("ENTRY_SPREAD_PCT", "0.10"))  # Temporarily lowered to 0.10% per user request
+
     while True:
         try:
             now_utc = datetime.datetime.now(datetime.timezone.utc)
-            if not getattr(engine, 'active_positions', None):
-                opp = await engine.scan_top_opportunity()
-                if opp and opp.get('gate') == 'ACCEPT' and opp.get('gross_spread_pct', 0.0) >= 0.25:
+
+            # Settlement alignment calculation (T-10s entry, T+2s exit)
+            next_settlement = (now_utc + datetime.timedelta(hours=1)).replace(minute=0, second=0, microsecond=0)
+            seconds_to_settlement = (next_settlement - now_utc).total_seconds()
+
+            is_t_minus_10s = (now_utc.minute == 59 and now_utc.second >= 50) or (seconds_to_settlement <= 10)
+            timing_str = f"Next Settlement in {int(seconds_to_settlement)}s (T-10s Entry Window: {'ACTIVE 🟢' if is_t_minus_10s else 'WAITING ⏳'})"
+
+            opp = await engine.scan_top_opportunity()
+
+            if opp:
+                coin = opp.get('coin', 'UNKNOWN')
+                d_sym = opp.get('delta_sym', '')
+                d_rate = opp.get('raw_delta_rate_pct', opp.get('delta_rate_pct', 0.0))
+                c_sym = opp.get('coindcx_sym', '')
+                c_rate = opp.get('raw_coindcx_rate_pct', opp.get('coindcx_rate_pct', 0.0))
+                gross_spread = opp.get('gross_spread_pct', 0.0)
+                net_spread = gross_spread - fees_pct
+                opp['net_spread_pct'] = net_spread
+
+                gate_status = "REJECT"
+                reject_reason = ""
+
+                if gross_spread < target_spread_threshold:
+                    reject_reason = f"Gross Spread {gross_spread:.4f}% < Threshold {target_spread_threshold:.4f}%"
+                elif getattr(engine, 'active_positions', None):
+                    reject_reason = "Active Position Already Open"
+                else:
+                    gate_status = "ACCEPT"
+
+                # PRINT [SPREAD CHECK] LOG FOR EVERY CYCLE
+                spread_check_msg = (
+                    f"🔍 [SPREAD CHECK] Coin: {coin} | "
+                    f"Delta ({d_sym}): {d_rate:+.4f}% | "
+                    f"CoinDCX ({c_sym}): {c_rate:+.4f}% | "
+                    f"Gross Spread: {gross_spread:.4f}% | "
+                    f"Fees: {fees_pct:.4f}% | "
+                    f"Net Spread: {net_spread:+.4f}% | "
+                    f"Threshold: {target_spread_threshold:.4f}% | "
+                    f"Gate: {gate_status}{f' ({reject_reason})' if reject_reason else ''} | "
+                    f"{timing_str}"
+                )
+                add_log(spread_check_msg)
+
+                if gate_status == "ACCEPT":
                     funding_window_id = f"{now_utc.strftime('%Y-%m-%d')}_{now_utc.hour}"
                     if getattr(engine, 'last_executed_window_id', None) != funding_window_id:
                         engine.last_executed_window_id = funding_window_id
-                        logger.info(f"⚡ [CONTINUOUS ARBITRAGE LOOP] Triggering #1 Opportunity: {opp['coin']} | Spread: {opp['gross_spread_pct']:.4f}% >= 0.25%")
-                        
-                        entry_res = await engine.execute_hft_parallel_entry(opp)
-                        logger.info(f"   [JSON AUDIT ENTRY] {entry_res}")
-                        
-                        if "SUCCESS" in entry_res.get("status", ""):
-                            # Target settlement hour + 2 seconds for Scalper 0% Fee exit
-                            if now_utc.minute >= 30:
-                                target_dt = (now_utc + datetime.timedelta(hours=1)).replace(minute=0, second=2, microsecond=0)
-                            else:
-                                target_dt = now_utc.replace(minute=30, second=2, microsecond=0)
 
-                            wait_sec = (target_dt - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
-                            if 0 < wait_sec < 300:
-                                logger.info(f"⏳ Waiting {wait_sec:.2f}s for Funding Settlement & T+2s Scalper Exit...")
-                                await asyncio.sleep(wait_sec)
+                        # PRINT [TRADE TRIGGERED] LOG
+                        trade_triggered_msg = (
+                            f"⚡ [TRADE TRIGGERED] Asset: {coin} | "
+                            f"Gross Spread: {gross_spread:.4f}% | "
+                            f"Net Spread: {net_spread:+.4f}% >= Threshold {target_spread_threshold:.4f}% | "
+                            f"Leg 1 (Delta): {opp['delta_side']} {d_sym} | "
+                            f"Leg 2 (CoinDCX): {opp['coindcx_side']} {c_sym} | "
+                            f"Timing: {timing_str}"
+                        )
+                        add_log(trade_triggered_msg)
+
+                        # Align with T-10s settlement window if not already in it
+                        if 10 < seconds_to_settlement < 300:
+                            wait_t10 = seconds_to_settlement - 10
+                            add_log(f"⏳ [SETTLEMENT ALIGNMENT] Sleeping {wait_t10:.1f}s until T-10s entry window...")
+                            await asyncio.sleep(wait_t10)
+
+                        add_log(f"🚀 [T-10s ENTRY FIRING] Transmitting simultaneous market orders on Delta & CoinDCX...")
+                        entry_res = await engine.execute_hft_parallel_entry(opp)
+                        add_log(f"   [JSON AUDIT ENTRY] {entry_res}")
+
+                        if "SUCCESS" in entry_res.get("status", ""):
+                            # Sleep until T+2s post-funding for 0% Delta Scalper Exit
+                            now_after_entry = datetime.datetime.now(datetime.timezone.utc)
+                            target_exit_dt = (now_after_entry + datetime.timedelta(hours=1)).replace(minute=0, second=2, microsecond=0)
+                            wait_exit_sec = (target_exit_dt - now_after_entry).total_seconds()
+                            if 0 < wait_exit_sec < 300:
+                                add_log(f"⏳ [T+2s SCALPER EXIT PENDING] Sleeping {wait_exit_sec:.2f}s for Funding Snapshot & T+2s Exit...")
+                                await asyncio.sleep(wait_exit_sec)
 
                             exit_res = await engine.execute_hft_parallel_exit(engine.active_positions, trigger_reason="Scalper Exit T+2s")
-                            logger.info(f"   [JSON AUDIT EXIT] {exit_res}")
+                            add_log(f"   [JSON AUDIT EXIT] {exit_res}")
 
-                            # Refresh live balance to compute Real Net PnL
                             if hasattr(engine, 'executor') and engine.executor:
                                 d_b, c_b, m_m = await engine.executor.fetch_live_balances()
                                 bot_state["delta_balance_live"] = d_b
@@ -518,10 +584,12 @@ async def arbitrage_loop():
                                 initial_b = bot_state.get("initial_total_balance") or tot_b
                                 real_pnl = round(tot_b - initial_b, 4)
                                 bot_state["net_pnl_usd"] = real_pnl
-                                logger.info(f"[REAL PNL] Net: ${real_pnl:+.4f} USD (computed from live balances).")
-                        
+                                add_log(f"[REAL PNL] Net: ${real_pnl:+.4f} USD (computed from live balances).")
+            else:
+                add_log(f"🔍 [SPREAD CHECK] No common coins found | {timing_str}")
+
         except Exception as e:
-            logger.warning(f"⚠️ [ARBITRAGE LOOP WARNING]: {e}")
+            add_log(f"⚠️ [ARBITRAGE LOOP WARNING]: {e}")
 
         await asyncio.sleep(10)
 

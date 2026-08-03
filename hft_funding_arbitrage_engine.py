@@ -73,7 +73,7 @@ FEE_SCALPER_DELTA_EXIT  = 0.00000    # 0.000% Delta Scalper Exit (FREE, <10s tra
 FEE_TAKER_COINDCX_ENTRY = 0.00059    # 0.059% CoinDCX Taker Entry
 FEE_MAKER_COINDCX_EXIT  = 0.000236   # 0.0236% CoinDCX Maker Exit
 TOTAL_ROUNDTRIP_FEE_PCT = 0.001416   # 0.1416% Total — already the FULL dual-leg roundtrip
-MIN_GROSS_SPREAD_PCT    = float(os.getenv("ENTRY_SPREAD_PCT", "0.25"))   # Minimum Gross Spread Gate (0.25%) — AGENTS.md Rule 4
+MIN_GROSS_SPREAD_PCT    = float(os.getenv("ENTRY_SPREAD_PCT", "0.10"))   # Minimum Gross Spread Gate (0.10% - temporarily lowered for testing)
 
 # Sizing Lot Value Definitions — AGENTS.md Rule 2
 LOT_SIZES = {
@@ -145,6 +145,38 @@ class HFTFundingArbitrageEngine:
             enable_cleanup_closed=True
         )
         self.session = aiohttp.ClientSession(connector=connector, headers=self.headers)
+
+    async def verify_funding_endpoints(self) -> Dict[str, Dict]:
+        """
+        Verifies primary funding rate endpoints:
+        - Delta: /v2/funding_rates
+        - CoinDCX: /exchange/v1/derivatives/futures/funding_rates
+        Logs verification results and returns status dictionary.
+        """
+        if self.session is None or self.session.closed:
+            await self.init_session()
+
+        endpoints = [
+            ("Delta /v2/funding_rates", f"{DELTA_BASE_URL}/v2/funding_rates"),
+            ("CoinDCX /exchange/v1/derivatives/futures/funding_rates", f"{COINDCX_BASE_URL}/exchange/v1/derivatives/futures/funding_rates")
+        ]
+
+        status_results = {}
+        for name, url in endpoints:
+            try:
+                async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=5)) as resp:
+                    st = resp.status
+                    if st == 200:
+                        logging.info(f"🟢 [ENDPOINT VERIFY] {name} -> HTTP 200 OK")
+                        status_results[name] = {"status": "OK", "http_status": 200}
+                    else:
+                        logging.warning(f"⚠️ [ENDPOINT VERIFY] {name} -> HTTP {st} (Using ticker/index fallback provider)")
+                        status_results[name] = {"status": f"HTTP {st}", "http_status": st}
+            except Exception as e:
+                logging.warning(f"⚠️ [ENDPOINT VERIFY] {name} -> Error: {e} (Using ticker/index fallback provider)")
+                status_results[name] = {"status": "ERROR", "error": str(e)}
+
+        return status_results
 
     async def close_session(self):
         if self.session and not self.session.closed:
@@ -360,6 +392,7 @@ class HFTFundingArbitrageEngine:
                 'coindcx_interval_h': c_data['interval_h'],
                 'coindcx_mark':      c_data['mark'],
                 'gross_spread_pct':  gross_spread,
+                'net_spread_pct':    net_profit,
                 'net_profit_pct':    net_profit,
                 'delta_side':        delta_side,
                 'coindcx_side':      coindcx_side,
@@ -435,6 +468,7 @@ class HFTFundingArbitrageEngine:
                 'coindcx_interval_h': c_data['interval_h'],
                 'coindcx_mark':      c_data['mark'],
                 'gross_spread_pct':  gross_spread,
+                'net_spread_pct':    net_profit,
                 'net_profit_pct':    net_profit,
                 'delta_side':        delta_side,
                 'coindcx_side':      coindcx_side,
