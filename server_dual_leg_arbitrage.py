@@ -96,7 +96,10 @@ async def handle_api_state(request):
             bot_state["coindcx_balance"] = c_bal
             bot_state["delta_balance_live"] = d_bal
             bot_state["coindcx_futures_balance_live"] = c_bal
-            bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX: ${c_bal:.2f} | Total: ${d_bal+c_bal:.2f}"
+            if bot_state.get("coindcx_status") == "401_UNAUTHORIZED":
+                bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX: 🚨 401 UNAUTHORIZED (BLOCKED)"
+            elif bot_state.get("coindcx_status") == "CONNECTED":
+                bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX: ${c_bal:.2f} (CONNECTED)"
     except Exception:
         pass
     payload = {
@@ -441,6 +444,7 @@ async def funding_scan_worker():
 async def balance_refresh_worker():
     """Background worker polling live balances on Delta & CoinDCX Futures every 10 seconds and computing Real Net PnL."""
     await asyncio.sleep(5)
+    last_notified_status = None
     while True:
         try:
             if not hasattr(engine, 'executor') or engine.executor is None:
@@ -448,15 +452,36 @@ async def balance_refresh_worker():
                 engine.executor = LiveOrderExecutor()
                 await engine.executor._ensure_session()
 
-            d_bal, c_bal, min_margin = await engine.executor.fetch_live_balances()
+            d_bal, c_bal, min_margin, meta = await engine.executor.fetch_live_balances()
             ts_now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S IST")
             bot_state["delta_balance"] = d_bal
             bot_state["delta_balance_live"] = d_bal
             bot_state["coindcx_balance"] = c_bal
             bot_state["coindcx_futures_balance_live"] = c_bal
+            bot_state["coindcx_status"] = meta["coindcx_status"]
+            bot_state["coindcx_http"] = meta["coindcx_http"]
+            bot_state["coindcx_error_msg"] = meta["coindcx_error_msg"]
+            bot_state["coindcx_last_success"] = meta["coindcx_last_success"]
+            bot_state["trade_allowed"] = meta["trade_allowed"]
+            bot_state["blocked_reason"] = meta["blocked_reason"]
             bot_state["last_balance_update_time"] = ts_now
             tot_bal = round(d_bal + c_bal, 2)
-            bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Total: ${tot_bal:.2f} (Updated {ts_now})"
+
+            if meta["coindcx_status"] == "401_UNAUTHORIZED":
+                bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX: 🚨 401 UNAUTHORIZED (BLOCKED) | Total: ${d_bal:.2f}"
+                if last_notified_status != "401_UNAUTHORIZED":
+                    last_notified_status = "401_UNAUTHORIZED"
+                    send_telegram_alert(
+                        "🚨 *[CRITICAL SAFETY BLOCK]*\n\n"
+                        "CoinDCX Balance API returned *HTTP 401 Unauthorized*.\n"
+                        "Live trading is *STRICTLY DISABLED* until API permissions (`Read Balances` / `Futures Read`) are enabled on CoinDCX Dashboard."
+                    )
+            elif meta["coindcx_status"] == "CONNECTED":
+                bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX: ${c_bal:.2f} | Total: ${tot_bal:.2f}"
+                last_notified_status = "CONNECTED"
+            else:
+                bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX: ⚠️ {meta['coindcx_status']} | Total: ${d_bal:.2f}"
+
             bot_state["paper_wallet_balance"] = tot_bal
 
             if bot_state.get("initial_total_balance") is None or bot_state["initial_total_balance"] <= 0:
@@ -464,7 +489,7 @@ async def balance_refresh_worker():
 
             real_pnl = round(tot_bal - bot_state["initial_total_balance"], 4)
             bot_state["net_pnl_usd"] = real_pnl
-            logger.info(f"[BALANCE CHECK] Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Safe Margin: ${min_margin:.2f} | Real Net PnL: ${real_pnl:+.4f} USD")
+            logger.info(f"[BALANCE CHECK] Delta: ${d_bal:.2f} | CoinDCX: ${c_bal:.2f} (Status: {meta['coindcx_status']}) | Safe Margin: ${min_margin:.2f}")
         except Exception as e:
             logger.warning(f"⚠️ Balance refresh worker error: {e}, retrying in 10s...")
 
@@ -519,7 +544,9 @@ async def arbitrage_loop():
                 gate_status = "REJECT"
                 reject_reason = ""
 
-                if gross_spread < target_spread_threshold:
+                if bot_state.get("trade_allowed") is False:
+                    reject_reason = f"CoinDCX API Unverified ({bot_state.get('coindcx_status', 'BLOCKED')}) — Trading Blocked"
+                elif gross_spread < target_spread_threshold:
                     reject_reason = f"Gross Spread {gross_spread:.4f}% < Threshold {target_spread_threshold:.4f}%"
                 elif getattr(engine, 'active_positions', None):
                     reject_reason = "Active Position Already Open"

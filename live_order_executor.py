@@ -167,17 +167,24 @@ class LiveOrderExecutor:
         if self.session and not self.session.closed:
             await self.session.close()
 
-    async def fetch_live_balances(self) -> Tuple[float, float, float]:
+    async def fetch_live_balances(self) -> Tuple[float, float, float, Dict]:
         """
         Fetches live margin balance on both Delta and CoinDCX.
-        Returns: (delta_usd, coindcx_usdt, min_effective_margin)
+        Returns: (delta_usd, coindcx_usdt, min_effective_margin, status_metadata_dict)
+        Preserves HTTP status codes explicitly and blocks trading if CoinDCX API is unverified/unauthorized.
         """
         await self._ensure_session()
         d_bal = getattr(self, '_last_d_bal', 0.0)
         c_bal = getattr(self, '_last_c_bal', 0.0)
-        delays = [5, 10, 20]
+        delays = [2, 5, 10]
 
-        # ── Delta Balance with 3 retries ──────────────────────────────────
+        coindcx_status = "UNKNOWN"
+        coindcx_http = 0
+        coindcx_error_msg = ""
+        spot_usdt = 0.0
+        futures_locked = 0.0
+
+        # ── 1. Delta Balance with Retries ──────────────────────────────────
         for attempt in range(3):
             try:
                 t_stamp, sig = sign_delta("GET", "/v2/wallet/balances", "")
@@ -195,15 +202,20 @@ class LiveOrderExecutor:
                 if attempt < 2:
                     await asyncio.sleep(delays[attempt])
 
-        # ── CoinDCX Balance with 3 retries ──────────────────────────────
+        # ── 2. CoinDCX Balance with Explicit HTTP Code Tracking ──────────────
         for attempt in range(3):
             try:
-                spot_usdt, futures_locked = 0.0, 0.0
                 path = "/exchange/v1/users/balances"
                 payload = {}
                 body_str, sig = sign_coindcx(payload)
-                headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": sig, "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+                headers = {
+                    "Content-Type": "application/json",
+                    "X-AUTH-APIKEY": COINDCX_API_KEY,
+                    "X-AUTH-SIGNATURE": sig,
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                }
                 async with self.session.post(COINDCX_BASE_URL + path, data=body_str, headers=headers, timeout=self.t_balance) as resp:
+                    coindcx_http = resp.status
                     if resp.status == 200:
                         data = await resp.json()
                         if isinstance(data, list):
@@ -211,35 +223,86 @@ class LiveOrderExecutor:
                                 if item.get("currency") == "USDT":
                                     spot_usdt = float(item.get("balance") or 0)
                                     break
-                pos_path = "/exchange/v1/derivatives/futures/positions"
-                pos_payload = {}
-                pos_body, pos_sig = sign_coindcx(pos_payload)
-                pos_headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": pos_sig, "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-                async with self.session.post(COINDCX_BASE_URL + pos_path, data=pos_body, headers=pos_headers, timeout=self.t_balance) as resp2:
-                    if resp2.status == 200:
-                        positions = await resp2.json()
-                        if isinstance(positions, list):
-                            for p in positions:
-                                lm = float(p.get("locked_user_margin") or 0)
-                                futures_locked += lm
-                c_bal = spot_usdt + futures_locked
-                break
+                        coindcx_status = "CONNECTED"
+                    elif resp.status == 401:
+                        coindcx_status = "401_UNAUTHORIZED"
+                        coindcx_error_msg = "CoinDCX API Key Unauthorized (Read Balances Permission Missing or IP Whitelist Error)"
+                        break
+                    else:
+                        coindcx_status = f"HTTP_{resp.status}"
+                        coindcx_error_msg = f"HTTP Error {resp.status}"
+
+                # Query Futures Locked Margin if Spot read succeeded
+                if coindcx_status == "CONNECTED":
+                    pos_path = "/exchange/v1/derivatives/futures/positions"
+                    pos_body, pos_sig = sign_coindcx({})
+                    pos_headers = {
+                        "Content-Type": "application/json",
+                        "X-AUTH-APIKEY": COINDCX_API_KEY,
+                        "X-AUTH-SIGNATURE": pos_sig,
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                    }
+                    async with self.session.post(COINDCX_BASE_URL + pos_path, data=pos_body, headers=pos_headers, timeout=self.t_balance) as resp2:
+                        if resp2.status == 200:
+                            positions = await resp2.json()
+                            if isinstance(positions, list):
+                                for p in positions:
+                                    lm = float(p.get("locked_user_margin") or 0)
+                                    futures_locked += lm
+                        elif resp2.status == 401:
+                            coindcx_status = "401_UNAUTHORIZED"
+                            coindcx_error_msg = "Futures Read Permission Missing (HTTP 401)"
+
+                if coindcx_status == "CONNECTED":
+                    c_bal = spot_usdt + futures_locked
+                    self._last_valid_c_bal = c_bal
+                    self.coindcx_last_success_ts = datetime.datetime.now().strftime("%H:%M:%S")
+                    break
+
             except Exception as e:
+                coindcx_status = "API_ERROR"
+                coindcx_error_msg = str(e)
                 if attempt < 2:
                     await asyncio.sleep(delays[attempt])
 
+        # Handle Paper Mode Overrides if enabled
         if not LIVE_EXECUTION:
             env_c_bal = os.getenv("COINDCX_OVERRIDE_BALANCE")
             env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")
             if env_d_bal: d_bal = float(env_d_bal)
             if env_c_bal: c_bal = float(env_c_bal)
+            coindcx_status = "PAPER_MODE"
 
-        self._last_d_bal, self._last_c_bal = d_bal, c_bal
-        min_margin = min(d_bal, c_bal) * 0.75
-        if min_margin < 1.0: min_margin = max(1.0, d_bal * 0.75)
+        self._last_d_bal = d_bal
+        if coindcx_status == "CONNECTED":
+            self._last_c_bal = c_bal
 
-        logger.info(f"[BALANCE CHECK] Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} | Safe Margin: ${min_margin:.2f}")
-        return d_bal, c_bal, min_margin
+        # STRICT ZERO-RISK TRADE GATE:
+        # If CoinDCX balance API is unauthorized, broken, or zero: safe margin MUST be 0.0.
+        # DO NOT allow trades based on Delta balance alone!
+        if coindcx_status not in ("CONNECTED", "PAPER_MODE") or c_bal <= 0:
+            min_margin = 0.0
+            trade_allowed = False
+        else:
+            min_margin = min(d_bal, c_bal) * 0.75
+            trade_allowed = min_margin >= 1.0
+
+        status_meta = {
+            "coindcx_status": coindcx_status,
+            "coindcx_http": coindcx_http,
+            "coindcx_error_msg": coindcx_error_msg,
+            "coindcx_last_success": getattr(self, 'coindcx_last_success_ts', '-'),
+            "coindcx_available_usdt": spot_usdt,
+            "coindcx_locked_margin": futures_locked,
+            "trade_allowed": trade_allowed,
+            "blocked_reason": coindcx_error_msg if not trade_allowed else ""
+        }
+
+        logger.info(
+            f"[BALANCE AUDIT] Delta: ${d_bal:.2f} | CoinDCX: ${c_bal:.2f} | Status: {coindcx_status} (HTTP {coindcx_http}) | "
+            f"Safe Margin: ${min_margin:.2f} | Trade Allowed: {'YES 🟢' if trade_allowed else 'BLOCKED 🔴'}"
+        )
+        return d_bal, c_bal, min_margin, status_meta
 
 
     async def _delta_get(self, path: str) -> Dict:
@@ -377,8 +440,13 @@ class LiveOrderExecutor:
         await self._ensure_session()
         ts = datetime.datetime.now().strftime("%H:%M:%S.%f")[:-3]
 
-        # Audit Live Balances to ensure 100% Margin Neutrality
-        d_bal, c_bal, min_safe_margin = await self.fetch_live_balances()
+        # Audit Live Balances to ensure 100% Margin Neutrality & Zero-Risk Safety Gate
+        d_bal, c_bal, min_safe_margin, meta = await self.fetch_live_balances()
+
+        if self.live and not meta.get("trade_allowed", False):
+            block_msg = f"LIVE TRADE BLOCKED: CoinDCX API Unverified ({meta.get('coindcx_status')}) - {meta.get('coindcx_error_msg')}"
+            logger.error(f"🚨 {block_msg}")
+            return {"status": "BLOCKED", "reason": block_msg, "status_meta": meta}
 
         if not self.live:
             await asyncio.sleep(0.015)
