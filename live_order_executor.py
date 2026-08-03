@@ -228,10 +228,11 @@ class LiveOrderExecutor:
                 if attempt < 2:
                     await asyncio.sleep(delays[attempt])
 
-        env_c_bal = os.getenv("COINDCX_OVERRIDE_BALANCE")
-        env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")
-        if env_d_bal: d_bal = float(env_d_bal)
-        if env_c_bal: c_bal = float(env_c_bal)
+        if not LIVE_EXECUTION:
+            env_c_bal = os.getenv("COINDCX_OVERRIDE_BALANCE")
+            env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")
+            if env_d_bal: d_bal = float(env_d_bal)
+            if env_c_bal: c_bal = float(env_c_bal)
 
         self._last_d_bal, self._last_c_bal = d_bal, c_bal
         min_margin = min(d_bal, c_bal) * 0.75
