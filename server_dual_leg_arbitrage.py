@@ -55,7 +55,7 @@ bot_state = {
     "last_scan_time": "-",
     "active_top_coin": "-",
     "top_gross_spread": "-",
-    "real_balance_display": "Delta: $7.94 | CoinDCX: $9.26 | Total: $17.20"
+    "real_balance_display": "Delta: $0.00 | CoinDCX: $0.00 | Total: $0.00"
 }
 live_logs = []
 paper_history = []
@@ -90,10 +90,12 @@ async def handle_api_state(request):
     """Return live dashboard state JSON for frontend updates."""
     try:
         if hasattr(engine, 'executor') and engine.executor:
-            d_bal = engine.executor._last_d_bal or 7.94
-            c_bal = engine.executor._last_c_bal or 9.26
+            d_bal = getattr(engine.executor, '_last_d_bal', 0.0)
+            c_bal = getattr(engine.executor, '_last_c_bal', 0.0)
             bot_state["delta_balance"] = d_bal
             bot_state["coindcx_balance"] = c_bal
+            bot_state["delta_balance_live"] = d_bal
+            bot_state["coindcx_futures_balance_live"] = c_bal
             bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX: ${c_bal:.2f} | Total: ${d_bal+c_bal:.2f}"
     except Exception:
         pass

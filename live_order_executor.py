@@ -173,8 +173,8 @@ class LiveOrderExecutor:
         Returns: (delta_usd, coindcx_usdt, min_effective_margin)
         """
         await self._ensure_session()
-        d_bal = getattr(self, '_last_d_bal', 7.96)
-        c_bal = getattr(self, '_last_c_bal', 9.31)
+        d_bal = getattr(self, '_last_d_bal', 0.0)
+        c_bal = getattr(self, '_last_c_bal', 0.0)
         delays = [5, 10, 20]
 
         # ── Delta Balance with 3 retries ──────────────────────────────────
@@ -232,7 +232,6 @@ class LiveOrderExecutor:
         env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")
         if env_d_bal: d_bal = float(env_d_bal)
         if env_c_bal: c_bal = float(env_c_bal)
-        elif c_bal < 1.0: c_bal = getattr(self, '_last_c_bal', 9.26)
 
         self._last_d_bal, self._last_c_bal = d_bal, c_bal
         min_margin = min(d_bal, c_bal) * 0.75
