@@ -27,8 +27,8 @@ COINDCX_BASE_URL = os.getenv("COINDCX_BASE_URL", "https://api.coindcx.com")
 
 DELTA_API_KEY      = os.getenv("DELTA_API_KEY",      "4um8VJANfCCLEjyFnVelVtGVdWvEuK")
 DELTA_API_SECRET   = os.getenv("DELTA_API_SECRET",   "v2MbvEtYeCCXR04YjZg9pZonEFIKh3p0SmUPXRTNxc99VSwZRblDLVXKbUMr")
-COINDCX_API_KEY    = os.getenv("COINDCX_API_KEY",    "19dc5aee6cf601709d7928ff92bbc69f694bdddb1b5f1b31")
-COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "0438b91768ef330f9afd50d488ba2549e1e0271ee3a470e455d624f0bc96385a")
+COINDCX_API_KEY    = os.getenv("COINDCX_API_KEY",    "2b28b8cad04d91128eb92048acaf2041b1249bdb13f270fe")
+COINDCX_API_SECRET = os.getenv("COINDCX_API_SECRET", "2fc83416123aec1d0f60fb66e5f52207cfbfee03f3a11ebc5fab4821486e036a")
 
 # Master live/paper toggle — default TRUE for real money execution
 LIVE_EXECUTION = os.getenv("LIVE_EXECUTION", "true").strip().lower() in ("true", "1", "yes")
@@ -202,7 +202,7 @@ class LiveOrderExecutor:
                 path = "/exchange/v1/users/balances"
                 payload = {}
                 body_str, sig = sign_coindcx(payload)
-                headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": sig}
+                headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": sig, "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
                 async with self.session.post(COINDCX_BASE_URL + path, data=body_str, headers=headers, timeout=self.t_balance) as resp:
                     if resp.status == 200:
                         data = await resp.json()
@@ -214,7 +214,7 @@ class LiveOrderExecutor:
                 pos_path = "/exchange/v1/derivatives/futures/positions"
                 pos_payload = {}
                 pos_body, pos_sig = sign_coindcx(pos_payload)
-                pos_headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": pos_sig}
+                pos_headers = {"Content-Type": "application/json", "X-AUTH-APIKEY": COINDCX_API_KEY, "X-AUTH-SIGNATURE": pos_sig, "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
                 async with self.session.post(COINDCX_BASE_URL + pos_path, data=pos_body, headers=pos_headers, timeout=self.t_balance) as resp2:
                     if resp2.status == 200:
                         positions = await resp2.json()
