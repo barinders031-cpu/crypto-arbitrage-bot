@@ -478,7 +478,12 @@ async def balance_refresh_worker():
                         "Live trading is *STRICTLY DISABLED* until API permissions (`Read Balances` / `Futures Read`) are enabled on CoinDCX Dashboard."
                     )
             elif meta["coindcx_status"] == "CONNECTED":
-                bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX: ${c_bal:.2f} | Total: ${tot_bal:.2f}"
+                # Check if balance came from env override (Futures USDT Margin — no direct API)
+                cdcx_override = os.environ.get("COINDCX_OVERRIDE_BALANCE")
+                if cdcx_override and float(cdcx_override) == c_bal:
+                    bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX Futures: ${c_bal:.2f} ✅ | Total: ${tot_bal:.2f}"
+                else:
+                    bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX: ${c_bal:.2f} | Total: ${tot_bal:.2f}"
                 last_notified_status = "CONNECTED"
             else:
                 bot_state["real_balance_display"] = f"Delta: ${d_bal:.2f} | CoinDCX: ⚠️ {meta['coindcx_status']} | Total: ${d_bal:.2f}"

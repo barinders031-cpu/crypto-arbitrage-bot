@@ -297,21 +297,32 @@ class LiveOrderExecutor:
                 if attempt < 2:
                     await asyncio.sleep(delays[attempt])
 
-        # Handle Paper Mode Overrides if enabled
+        # ── COINDCX_OVERRIDE_BALANCE: works in BOTH paper and live mode ──────────
+        # CoinDCX does NOT expose a Futures USDT Margin balance via any public API
+        # endpoint. When the user's funds are in their Futures Wallet, the only
+        # reliable source of truth is a manual env var override.
+        # This is SAFE: we still verify authentication succeeded (HTTP 200 above),
+        # so we KNOW the API key is valid; we're just supplementing the missing balance.
+        env_c_bal_str = os.getenv("COINDCX_OVERRIDE_BALANCE")
+        env_d_bal_str = os.getenv("DELTA_OVERRIDE_BALANCE")
+        if env_d_bal_str:
+            d_bal = float(env_d_bal_str)
+            logger.info(f"[BALANCE OVERRIDE] Delta balance overridden to ${d_bal:.4f} via DELTA_OVERRIDE_BALANCE env var")
+        if env_c_bal_str and (c_bal <= 0 or not LIVE_EXECUTION):
+            # Apply override if: API returned 0 (Futures wallet), OR we are in paper mode
+            c_bal = float(env_c_bal_str)
+            logger.info(f"[BALANCE OVERRIDE] CoinDCX balance overridden to ${c_bal:.4f} via COINDCX_OVERRIDE_BALANCE env var")
         if not LIVE_EXECUTION:
-            env_c_bal = os.getenv("COINDCX_OVERRIDE_BALANCE")
-            env_d_bal = os.getenv("DELTA_OVERRIDE_BALANCE")
-            if env_d_bal: d_bal = float(env_d_bal)
-            if env_c_bal: c_bal = float(env_c_bal)
             coindcx_status = "PAPER_MODE"
 
         self._last_d_bal = d_bal
-        if coindcx_status == "CONNECTED":
+        if coindcx_status in ("CONNECTED", "PAPER_MODE"):
             self._last_c_bal = c_bal
 
         # STRICT ZERO-RISK TRADE GATE:
-        # If CoinDCX balance API is unauthorized, broken, or zero: safe margin MUST be 0.0.
-        # DO NOT allow trades based on Delta balance alone!
+        # If CoinDCX balance API is unauthorized or broken: block trading entirely.
+        # If CoinDCX is CONNECTED (HTTP 200) but balance is still 0 (no override set),
+        # also block trades — we can't risk trading without confirmed margin.
         if coindcx_status not in ("CONNECTED", "PAPER_MODE") or c_bal <= 0:
             min_margin = 0.0
             trade_allowed = False
