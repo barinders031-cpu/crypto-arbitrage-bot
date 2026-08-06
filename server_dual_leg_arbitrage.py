@@ -559,6 +559,8 @@ async def arbitrage_loop():
                     reject_reason = f"CoinDCX API Unverified ({bot_state.get('coindcx_status', 'BLOCKED')}) — Trading Blocked"
                 elif gross_spread < target_spread_threshold:
                     reject_reason = f"Gross Spread {gross_spread:.4f}% < Threshold {target_spread_threshold:.4f}%"
+                elif seconds_to_settlement > 120:
+                    reject_reason = f"Waiting for T-2min Funding Window ({int(seconds_to_settlement)}s remaining)"
                 elif getattr(engine, 'active_positions', None):
                     reject_reason = "Active Position Already Open"
                 else:
@@ -595,8 +597,8 @@ async def arbitrage_loop():
                         add_log(trade_triggered_msg)
                         send_telegram_alert(trade_triggered_msg)
 
-                        # Align with T-10s settlement window if not already in it
-                        if 10 < seconds_to_settlement < 300:
+                        # Sleep until T-10s entry window if we entered between T-120s and T-10s
+                        if 10 < seconds_to_settlement <= 120:
                             wait_t10 = seconds_to_settlement - 10
                             add_log(f"⏳ [SETTLEMENT ALIGNMENT] Sleeping {wait_t10:.1f}s until T-10s entry window...")
                             await asyncio.sleep(wait_t10)
