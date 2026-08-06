@@ -275,13 +275,13 @@ async def continuous_funding_scheduler():
     while True:
         try:
             now_utc = datetime.datetime.now(datetime.timezone.utc)
-            # Official 4-hour funding settlements occur at 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC (05:30, 09:30, 13:30, 17:30, 21:30, 01:30 IST)
-            # Pre-funding window (T-2 min) triggers at minute 58-59 of UTC hours 23, 3, 7, 11, 15, 19
-            is_pre_funding = (now_utc.hour in [23, 3, 7, 11, 15, 19]) and (now_utc.minute in (58, 59))
+            # Official 4-hour funding settlements occur at 00:00, 04:00, 08:00, 12:00, 16:00, 20:00 UTC
+            # Pre-funding window now starts at T-5 minutes: UTC minutes 55-59 of hours 23, 3, 7, 11, 15, 19
+            is_pre_funding = (now_utc.hour in [23, 3, 7, 11, 15, 19]) and (now_utc.minute in (55, 56, 57, 58, 59))
             funding_window_id = f"{now_utc.strftime('%Y-%m-%d')}_{now_utc.hour}"
 
             if is_pre_funding and getattr(engine, "last_executed_window_id", None) != funding_window_id:
-                logger.info(f"⚡ PRE-FUNDING WINDOW DETECTED (UTC {now_utc.strftime('%H:%M:%S')})! Scanning #1 top opportunity...")
+                logger.info(f"⚡ PRE-FUNDING WINDOW DETECTED (UTC {now_utc.strftime('%H:%M:%S')})! Scanning #1 top opportunity at T-5m...")
                 opp = await engine.scan_top_opportunity()
                 
                 if opp:
@@ -463,6 +463,7 @@ async def balance_refresh_worker():
             bot_state["coindcx_http"] = meta["coindcx_http"]
             bot_state["coindcx_error_msg"] = meta["coindcx_error_msg"]
             bot_state["coindcx_last_success"] = meta["coindcx_last_success"]
+            bot_state["coindcx_balance_source"] = meta.get("coindcx_balance_source", "api")
             bot_state["trade_allowed"] = meta["trade_allowed"]
             bot_state["blocked_reason"] = meta["blocked_reason"]
             bot_state["last_balance_update_time"] = ts_now
@@ -555,7 +556,7 @@ async def arbitrage_loop():
                 gate_status = "REJECT"
                 reject_reason = ""
 
-                if bot_state.get("trade_allowed") is False:
+                if LIVE_EXECUTION and bot_state.get("trade_allowed") is False:
                     reject_reason = f"CoinDCX API Unverified ({bot_state.get('coindcx_status', 'BLOCKED')}) — Trading Blocked"
                 elif gross_spread < target_spread_threshold:
                     reject_reason = f"Gross Spread {gross_spread:.4f}% < Threshold {target_spread_threshold:.4f}%"
