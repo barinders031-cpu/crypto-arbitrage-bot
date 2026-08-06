@@ -232,6 +232,35 @@ class LiveOrderExecutor:
                         coindcx_status = f"HTTP_{resp.status}"
                         coindcx_error_msg = f"HTTP Error {resp.status}"
 
+                # ── ALSO fetch Futures USDT Margin balance (separate endpoint) ──
+                # User's Futures USDT Margin is at /exchange/v1/derivatives/futures/balances
+                futures_usdt_margin = 0.0
+                if coindcx_status == "CONNECTED":
+                    fut_bal_path = "/exchange/v1/derivatives/futures/balances"
+                    fut_bal_body, fut_bal_sig = sign_coindcx({})
+                    fut_bal_headers = {
+                        "Content-Type": "application/json",
+                        "X-AUTH-APIKEY": COINDCX_API_KEY,
+                        "X-AUTH-SIGNATURE": fut_bal_sig,
+                        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+                    }
+                    try:
+                        async with self.session.post(COINDCX_BASE_URL + fut_bal_path, data=fut_bal_body, headers=fut_bal_headers, timeout=self.t_balance) as resp_fb:
+                            if resp_fb.status == 200:
+                                fb_data = await resp_fb.json()
+                                # Response is a list of balance objects or a dict
+                                if isinstance(fb_data, list):
+                                    for fb_item in fb_data:
+                                        if fb_item.get("currency") in ("USDT", "usdt"):
+                                            futures_usdt_margin += float(fb_item.get("balance") or fb_item.get("available_balance") or 0)
+                                elif isinstance(fb_data, dict):
+                                    futures_usdt_margin = float(fb_data.get("balance") or fb_data.get("available_balance") or 0)
+                                logger.info(f"[COINDCX FUTURES MARGIN] USDT Margin Balance: ${futures_usdt_margin:.4f}")
+                            else:
+                                logger.warning(f"[COINDCX FUTURES MARGIN] HTTP {resp_fb.status} — trying alternate field")
+                    except Exception as ef:
+                        logger.warning(f"[COINDCX FUTURES MARGIN] Error: {ef}")
+
                 # Query Futures Locked Margin if Spot read succeeded
                 if coindcx_status == "CONNECTED":
                     pos_path = "/exchange/v1/derivatives/futures/positions"
@@ -254,9 +283,12 @@ class LiveOrderExecutor:
                             coindcx_error_msg = "Futures Read Permission Missing (HTTP 401)"
 
                 if coindcx_status == "CONNECTED":
-                    c_bal = spot_usdt + futures_locked
+                    # Use Futures USDT Margin as primary (if available), else fallback to spot
+                    # Futures margin > 0 means user has funded their futures account
+                    c_bal = futures_usdt_margin if futures_usdt_margin > 0 else (spot_usdt + futures_locked)
                     self._last_valid_c_bal = c_bal
                     self.coindcx_last_success_ts = datetime.datetime.now().strftime("%H:%M:%S")
+                    logger.info(f"[COINDCX BALANCE] Spot USDT: ${spot_usdt:.4f} | Futures Margin: ${futures_usdt_margin:.4f} | Locked: ${futures_locked:.4f} | Using: ${c_bal:.4f}")
                     break
 
             except Exception as e:
