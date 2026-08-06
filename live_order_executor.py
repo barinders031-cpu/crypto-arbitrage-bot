@@ -396,7 +396,11 @@ class LiveOrderExecutor:
             "margin_type":    "isolated",
         }
         if limit_price and order_type == "limit_order": order_dict["price"] = limit_price
-        if reduce_only and order_type == "limit_order": order_dict["reduce_only"] = True
+        if reduce_only:
+            if order_type == "limit_order":
+                order_dict["reduce_only"] = True  # Limit order: use reduce_only flag
+            else:
+                order_dict["position_intent"] = "reduce_only"  # Market order: use position_intent (CoinDCX API spec)
 
         payload = {"order": order_dict}
         delays = [5, 10, 20]

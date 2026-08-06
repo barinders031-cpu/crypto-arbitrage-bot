@@ -261,7 +261,7 @@ async def self_ping_worker():
 
 async def continuous_funding_scheduler():
     """24/7 Continuous Pre-Funding Scheduler Worker."""
-    await engine.init_session()
+    await engine.init_session()  # Primary session init — arbitrage_loop defers to this
     logger.info("🟢 Dual-Leg HFT Funding Scheduler Started...")
     
     send_telegram_alert(
@@ -288,6 +288,7 @@ async def continuous_funding_scheduler():
                     logger.info(f"   Top Coin: {opp['coin']} | Gross Spread: {opp['gross_spread_pct']:.4f}% | Net Profit: {opp['net_profit_pct']:+.4f}% | Gate: {opp['gate']}")
                     
                     if opp["gate"] == "ACCEPT":
+                        # Mark window BEFORE execution to prevent duplicate concurrent fires
                         engine.last_executed_window_id = funding_window_id
                         
                         send_telegram_alert(
@@ -305,11 +306,11 @@ async def continuous_funding_scheduler():
                         logger.info(f"   Parallel Entry Result: {entry_res}")
                         
                         if "SUCCESS" in entry_res.get("status", ""):
-                            # Step 2: Calculate target funding settlement time (next :00 or :30 + 2s)
-                            if now_utc.minute >= 30:
-                                target_dt = (now_utc + datetime.timedelta(hours=1)).replace(minute=0, second=2, microsecond=0)
-                            else:
-                                target_dt = now_utc.replace(minute=30, second=2, microsecond=0)
+                            # Step 2: Calculate target funding settlement time (next 4H slot :00 + 2s)
+                            # 4H settlements: 00, 04, 08, 12, 16, 20 UTC
+                            # We are at minute 58/59 of hours 23, 3, 7, 11, 15, 19
+                            # Target = (current_hour + 1) which IS the funding hour :00:02
+                            target_dt = (now_utc + datetime.timedelta(hours=1)).replace(minute=0, second=2, microsecond=0)
 
                             wait_sec = (target_dt - datetime.datetime.now(datetime.timezone.utc)).total_seconds()
                             if 0 < wait_sec < 180:
@@ -501,12 +502,16 @@ async def arbitrage_loop():
     Continuous Arbitrage Trigger Loop:
     - Log every spread check with Delta and CoinDCX funding rates.
     - Verify endpoints: Delta /v2/funding_rates, CoinDCX /exchange/v1/derivatives/futures/funding_rates.
-    - Lower spread threshold temporarily to 0.10% and test.
     - Implement Net Spread = Gross Spread - (fees).
     - Ensure loop aligns with funding settlement window (T-10s entry, T+2s exit).
     - Print [SPREAD CHECK] and [TRADE TRIGGERED] logs for every cycle.
     """
-    await asyncio.sleep(5)
+    # Wait for continuous_funding_scheduler to complete init_session() first (Bug #2 fix)
+    await asyncio.sleep(15)
+
+    # Ensure engine session is ready (fallback guard in case scheduler hasn't finished yet)
+    if engine.session is None or engine.session.closed:
+        await engine.init_session()
 
     # Verify endpoints at startup
     try:
@@ -515,8 +520,9 @@ async def arbitrage_loop():
     except Exception as e:
         add_log(f"⚠️ [ENDPOINT VERIFICATION ERROR] {e}")
 
-    fees_pct = 0.1416  # 0.1416% Total Dual-Leg Roundtrip Fee
-    target_spread_threshold = float(os.getenv("ENTRY_SPREAD_PCT", "0.10"))  # Temporarily lowered to 0.10% per user request
+    fees_pct = 0.1416  # 0.1416% Total Dual-Leg Roundtrip Fee (AGENTS.md Rule 3)
+    # AGENTS.md Rule 4: Minimum gate = 0.15% net after 0.1416% fees → minimum gross = 0.25%
+    target_spread_threshold = float(os.getenv("ENTRY_SPREAD_PCT", "0.25"))
 
     while True:
         try:
@@ -570,7 +576,7 @@ async def arbitrage_loop():
                 if gate_status == "ACCEPT":
                     funding_window_id = f"{now_utc.strftime('%Y-%m-%d')}_{now_utc.hour}"
                     if getattr(engine, 'last_executed_window_id', None) != funding_window_id:
-                        engine.last_executed_window_id = funding_window_id
+                        # NOTE: last_executed_window_id is set AFTER trade fires, not here
 
                         # PRINT [TRADE TRIGGERED] LOG
                         trade_triggered_msg = (
@@ -594,9 +600,12 @@ async def arbitrage_loop():
                         entry_res = await engine.execute_hft_parallel_entry(opp)
                         add_log(f"   [JSON AUDIT ENTRY] {entry_res}")
                         send_telegram_alert(f"🚀 *[ENTRY EXECUTED]* Asset: `{coin}` | Status: `{entry_res.get('status')}`")
+                        # Lock window AFTER successfully firing entry
+                        engine.last_executed_window_id = funding_window_id
 
                         if "SUCCESS" in entry_res.get("status", ""):
                             # Sleep until T+2s post-funding for 0% Delta Scalper Exit
+                            # Always target the next full hour :00:02 (4H funding settlement)
                             now_after_entry = datetime.datetime.now(datetime.timezone.utc)
                             target_exit_dt = (now_after_entry + datetime.timedelta(hours=1)).replace(minute=0, second=2, microsecond=0)
                             wait_exit_sec = (target_exit_dt - now_after_entry).total_seconds()
@@ -608,7 +617,7 @@ async def arbitrage_loop():
                             add_log(f"   [JSON AUDIT EXIT] {exit_res}")
 
                             if hasattr(engine, 'executor') and engine.executor:
-                                d_b, c_b, m_m = await engine.executor.fetch_live_balances()
+                                d_b, c_b, _min_m, _meta = await engine.executor.fetch_live_balances()
                                 bot_state["delta_balance_live"] = d_b
                                 bot_state["coindcx_futures_balance_live"] = c_b
                                 tot_b = round(d_b + c_b, 2)

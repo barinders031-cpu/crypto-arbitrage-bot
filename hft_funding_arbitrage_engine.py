@@ -331,88 +331,13 @@ class HFTFundingArbitrageEngine:
     # =========================================================================
     # OPPORTUNITY SCANNER
     # =========================================================================
-    async def scan_top_opportunity(self) -> Optional[Dict]:
-        """
-        Scans all common coins across Delta & CoinDCX using normalised 8H rates.
-        Selects the SINGLE #1 Highest Gross Spread passing the Net Profit Gate.
-        """
-        delta_map, coindcx_map = await asyncio.gather(
-            self.fetch_delta_funding_data(),
-            self.fetch_coindcx_funding_data()
-        )
-        if delta_map and coindcx_map:
-            logging.info("Parallel fetch success: Delta+CoinDCX")
-
-        opportunities: List[Dict] = []
-
-        for coin, d_data in delta_map.items():
-            if coin not in coindcx_map:
-                continue
-
-            c_data = coindcx_map[coin]
-            d_raw = d_data.get('raw_rate_pct', d_data['rate_pct'])
-            c_raw = c_data.get('raw_rate_pct', c_data['rate_pct'])
-            d_int = d_data.get('interval_h', 4.0)
-            c_int = c_data.get('interval_h', 8.0)
-
-            # Calculate exact single-window collectable rates for the upcoming funding settlement
-            d_win_rate = d_raw
-            c_win_rate = c_raw * (d_int / c_int)
-
-            # AGENTS.md Rule 4 — Real-Time Single-Window Spread Arithmetic
-            if (d_win_rate >= 0 and c_win_rate >= 0) or (d_win_rate <= 0 and c_win_rate <= 0):
-                # Same sign: subtract (smaller from larger)
-                gross_spread = abs(d_win_rate - c_win_rate)
-            else:
-                # Opposite sign: add both magnitudes (Double Yield Harvest)
-                gross_spread = abs(d_win_rate) + abs(c_win_rate)
-
-            net_profit = gross_spread - (TOTAL_ROUNDTRIP_FEE_PCT * 100.0)
-
-            # AGENTS.md Rule 5 — Action Logic (Double Funding Yield Harvest)
-            if d_win_rate >= c_win_rate:
-                # Delta has higher (+) or less negative rate → SHORT Delta, LONG CoinDCX
-                delta_side    = "SELL"
-                coindcx_side  = "BUY"
-            else:
-                # CoinDCX has higher rate → LONG Delta, SHORT CoinDCX
-                delta_side    = "BUY"
-                coindcx_side  = "SELL"
-
-            item = {
-                'coin':              coin,
-                'delta_sym':         d_data['symbol'],
-                'delta_rate_pct':    d_data['rate_pct'],
-                'raw_delta_rate_pct': d_raw,
-                'delta_interval_h':  d_data['interval_h'],
-                'delta_mark':        d_data['mark'],
-                'coindcx_sym':       c_data['symbol'],
-                'coindcx_rate_pct':  c_data['rate_pct'],
-                'raw_coindcx_rate_pct': c_raw,
-                'coindcx_interval_h': c_data['interval_h'],
-                'coindcx_mark':      c_data['mark'],
-                'gross_spread_pct':  gross_spread,
-                'net_spread_pct':    net_profit,
-                'net_profit_pct':    net_profit,
-                'delta_side':        delta_side,
-                'coindcx_side':      coindcx_side,
-            }
-            item['gate'] = "ACCEPT" if gross_spread >= MIN_GROSS_SPREAD_PCT else "REJECT"
-            opportunities.append(item)
-
-        if not opportunities:
-            return []
-
-        opportunities.sort(key=lambda x: x['gross_spread_pct'], reverse=True)
-        return opportunities
-
     async def scan_top_opportunities(self, limit: int = 5) -> List[Dict]:
         """Scans and returns top N opportunities sorted by real-time gross spread."""
         opps = await self._scan_all_opportunities()
         return opps[:limit]
 
     async def scan_top_opportunity(self) -> Optional[Dict]:
-        """Scans and returns the single #1 top opportunity."""
+        """Scans and returns the single #1 top opportunity. Returns None if none found."""
         opps = await self.scan_top_opportunities(limit=1)
         return opps[0] if opps else None
 
@@ -899,6 +824,7 @@ def main():
     parser.add_argument("--live",  action="store_true", help="Live HFT Mode (requires API keys in env)")
     parser.add_argument("--notional", type=float, default=100.0, help="Target notional USD per exchange (default: $100)")
 
+    args = parser.parse_args()  # FIX: was missing — caused NameError on args.live
     env_live = os.getenv("LIVE_EXECUTION", "false").strip().lower() in ("true", "1", "yes")
     is_live = args.live or env_live
 
